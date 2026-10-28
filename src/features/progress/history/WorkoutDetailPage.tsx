@@ -8,9 +8,9 @@ import { EmptyState, ErrorState, InlineError, LoadingState } from '../../../comp
 import { formatDuration, formatLongDate } from '../../../lib/date'
 import { toMessage } from '../../../lib/supabase'
 import { useAsync } from '../../../lib/useAsync'
-import { deleteSet, discardWorkout, logSet } from '../../workout/api'
 import { parseSetValues, SET_LIMITS } from '../../workout/session'
-import { fetchWorkoutDetail, updateSetValues, type HistorySetRow } from './api'
+import { useSyncStatus } from '../../../lib/offline/useSync'
+import { addHistorySet, deleteHistorySet, deleteWorkout, fetchWorkoutDetail, isWaitingForSync, updateSetValues, type HistorySetRow } from './api'
 import { groupSetsByExercise, nextSetIndex, workoutDurationMs, workoutVolume } from './history'
 
 const NUMBER = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 1 })
@@ -24,12 +24,13 @@ export function WorkoutDetailPage() {
   const [confirming, setConfirming] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const waiting = isWaitingForSync(workoutId, useSyncStatus())
 
   async function removeWorkout() {
     setDeleting(true)
     setError(null)
     try {
-      await discardWorkout(workoutId)
+      await deleteWorkout(workoutId)
       navigate('/fortschritt', { replace: true })
     } catch (err) {
       setConfirming(false)
@@ -58,6 +59,11 @@ export function WorkoutDetailPage() {
     <>
       {back}
       <PageHeader eyebrow={formatLongDate(new Date(workout.startedAt))} title={workout.title} />
+      {waiting && (
+        <p role="status" className="mb-4 rounded-xl border border-warn/40 bg-warn/10 px-4 py-3 text-sm text-warn">
+          Wartet auf Sync: Dieses Training lässt sich bearbeiten, sobald alle Einträge übertragen sind.
+        </p>
+      )}
       <p className="-mt-3 mb-5 text-sm text-muted tabular-nums">
         {duration !== null && `${formatDuration(duration)} · `}
         {workout.sets.length} Sätze · {NUMBER.format(workoutVolume(workout.sets))} kg Volumen
@@ -115,7 +121,7 @@ function SetRow({ set, number, onChanged }: { readonly set: HistorySetRow; reado
     const parsed = parseSetValues(weight, reps)
     if (!parsed) return setError(INVALID_SET)
     void run(async () => {
-      await updateSetValues(set.id, parsed.weightKg, parsed.reps)
+      await updateSetValues(set.workout_id, set.id, parsed.weightKg, parsed.reps)
       setWeight(text(parsed.weightKg))
       setReps(String(parsed.reps))
     }, 'Der Satz konnte nicht gespeichert werden.')
@@ -135,7 +141,7 @@ function SetRow({ set, number, onChanged }: { readonly set: HistorySetRow; reado
             type="button"
             aria-label={`Satz ${number} löschen`}
             disabled={busy}
-            onClick={() => void run(() => deleteSet(set.id), 'Der Satz konnte nicht gelöscht werden.')}
+            onClick={() => void run(() => deleteHistorySet(set.workout_id, set.id), 'Der Satz konnte nicht gelöscht werden.')}
             className="flex size-12 shrink-0 items-center justify-center rounded-xl text-muted hover:bg-danger/10 hover:text-danger disabled:opacity-40"
           >
             <IconTrash className="size-5" />
@@ -186,7 +192,7 @@ function AddSet({ workoutId, exerciseKey, sets, last, onAdded }: AddSetProps) {
     setBusy(true)
     setError(null)
     try {
-      await logSet({ workoutId, exerciseKey, setIndex: nextSetIndex(sets, exerciseKey), weightKg: parsed.weightKg, reps: parsed.reps })
+      await addHistorySet({ workoutId, exerciseKey, setIndex: nextSetIndex(sets, exerciseKey), weightKg: parsed.weightKg, reps: parsed.reps })
       setOpen(false)
       onAdded()
     } catch (err) {

@@ -6,7 +6,7 @@ import { suggestNext, type LoggedSet, type Suggestion } from './progression'
 export interface SetEntry {
   readonly weight: string
   readonly reps: string
-  /** id der gespeicherten Zeile in workout_sets, null = noch nicht abgehakt. */
+  /** Kennung des gespeicherten Satzes (Server-id oder lokal vergeben), null = noch nicht abgehakt. */
   readonly loggedId: string | null
   readonly saving: boolean
 }

@@ -1,3 +1,4 @@
+import { cachedRead } from '../../lib/offline'
 import { rpcCreatePlan } from '../../lib/rpc'
 import { supabase, unwrap, unwrapMaybe, UserFacingError } from '../../lib/supabase'
 import type { Tables } from '../../types/database'
@@ -26,7 +27,12 @@ export async function savePlan(plan: NewPlan): Promise<string> {
   return rpcCreatePlan(toCreatePlanArgs(plan))
 }
 
-export async function fetchActivePlan(): Promise<PlanDetail | null> {
+/** Aktiver Plan mit Tagen und Übungen; offline der zuletzt geladene Stand. */
+export function fetchActivePlan(): Promise<PlanDetail | null> {
+  return cachedRead('plan:active', fetchActivePlanFromServer)
+}
+
+async function fetchActivePlanFromServer(): Promise<PlanDetail | null> {
   const plan = unwrapMaybe(await supabase.from('plans').select('*').eq('is_active', true).maybeSingle())
   if (!plan) return null
   const days = unwrap(await supabase.from('plan_days').select('*').eq('plan_id', plan.id).order('day_index'))
@@ -48,15 +54,18 @@ export async function fetchActivePlan(): Promise<PlanDetail | null> {
 export async function fetchNextDay(detail: PlanDetail): Promise<PlanDay | null> {
   const training = detail.days.filter((d) => !d.is_rest)
   if (training.length === 0) return null
-  const last = unwrapMaybe(
-    await supabase
-      .from('workouts')
-      .select('plan_day_id')
-      .in('plan_day_id', training.map((d) => d.id))
-      .not('finished_at', 'is', null)
-      .order('finished_at', { ascending: false })
-      .limit(1)
-      .maybeSingle(),
+  const last = await cachedRead(`plan:lastDay:${detail.plan.id}`, async () =>
+    unwrapMaybe(
+      await supabase
+        .from('workouts')
+        .select('plan_day_id')
+        .in('plan_day_id', training.map((d) => d.id))
+        .not('finished_at', 'is', null)
+        .order('finished_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ),
+    { empty: null },
   )
   const lastIndex = training.findIndex((d) => d.id === last?.plan_day_id)
   return training[nextDayIndex(training.length, lastIndex >= 0 ? lastIndex : null)] ?? null

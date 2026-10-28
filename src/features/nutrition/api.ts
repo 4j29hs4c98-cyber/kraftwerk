@@ -1,7 +1,11 @@
 import { toISODate } from '../../lib/date'
+import { cachedRead, currentUserId, pendingEntries, submit } from '../../lib/offline'
+import type { FoodInsertPayload } from '../../lib/offline/ops'
 import { rpcCreateMealPlan } from '../../lib/rpc'
-import { check, supabase, unwrap, unwrapMaybe, UserFacingError } from '../../lib/supabase'
+import { supabase, unwrap, unwrapMaybe, UserFacingError } from '../../lib/supabase'
 import type { Tables } from '../../types/database'
+import { pendingTrainingStarts } from '../workout/pending'
+import { applyPendingFood } from './pending'
 import { isDayKey, isMealSlot, MEAL_LIMITS, toCreateMealItems, validateMealItems, type MealItem, type MealSlot } from './mealPlan/model'
 
 export type FoodEntry = Tables<'food_entries'>
@@ -37,48 +41,53 @@ export interface NewFoodEntry extends FoodValues {
   readonly grams?: number | null
 }
 
-const UNIQUE_VIOLATION = '23505'
-
-function isUniqueViolation(error: unknown): boolean {
-  return Boolean(error && typeof error === 'object' && 'code' in error && error.code === UNIQUE_VIOLATION)
+/** Serverstand (offline aus dem Vorrat) plus noch nicht übertragene Einträge der Warteschlange. */
+async function withPendingFood(rows: readonly FoodEntry[], inRange: (day: string) => boolean): Promise<FoodEntry[]> {
+  const userId = currentUserId()
+  return userId ? applyPendingFood(rows, await pendingEntries(), userId, inRange) : [...rows]
 }
 
 export async function fetchFoodEntries(day: string): Promise<FoodEntry[]> {
-  return unwrap(await supabase.from('food_entries').select('*').eq('eaten_on', day).order('created_at'))
+  const rows = await cachedRead(`food:${day}`, async () => unwrap(await supabase.from('food_entries').select('*').eq('eaten_on', day).order('created_at')), {
+    empty: [],
+  })
+  return withPendingFood(rows, (d) => d === day)
 }
 
-export async function addFoodEntry(entry: NewFoodEntry): Promise<FoodEntry> {
-  const result = await supabase
-    .from('food_entries')
-    .insert({
-      eaten_on: entry.eatenOn,
-      name: entry.name,
-      kcal: entry.kcal,
-      protein_g: entry.proteinG,
-      carbs_g: entry.carbsG,
-      fat_g: entry.fatG,
-      meal_slot: entry.mealSlot,
-      meal_plan_item_id: entry.mealPlanItemId,
-      status: entry.status,
-      grams: entry.grams ?? null,
-    })
-    .select('*')
-    .single()
-  if (isUniqueViolation(result.error)) throw new UserFacingError('Für diese Mahlzeit gibt es an diesem Tag schon einen Eintrag.')
-  return unwrap(result)
+/*
+ * Schreibzugriffe auf Essens-Einträge laufen über die Offline-Warteschlange.
+ * Neue Einträge bekommen ihre id im Client, damit erneutes Senden keine Kopie anlegt.
+ */
+
+export async function addFoodEntry(entry: NewFoodEntry): Promise<void> {
+  const payload: FoodInsertPayload = {
+    id: crypto.randomUUID(),
+    created_at: new Date().toISOString(),
+    eaten_on: entry.eatenOn,
+    name: entry.name,
+    kcal: entry.kcal,
+    protein_g: entry.proteinG,
+    carbs_g: entry.carbsG,
+    fat_g: entry.fatG,
+    meal_slot: entry.mealSlot,
+    meal_plan_item_id: entry.mealPlanItemId,
+    status: entry.status,
+    grams: entry.grams ?? null,
+  }
+  if (entry.mealPlanItemId !== null) {
+    // Die Datenbank erlaubt pro Plan-Mahlzeit und Tag nur einen Eintrag; lokal vorab prüfen, damit der Fehler sofort sichtbar ist.
+    const existing = await fetchFoodEntries(entry.eatenOn)
+    if (existing.some((e) => e.meal_plan_item_id === entry.mealPlanItemId)) throw new UserFacingError('Für diese Mahlzeit gibt es an diesem Tag schon einen Eintrag.')
+  }
+  await submit({ kind: 'food.insert', entry: payload })
 }
 
 export async function updateFoodEntry(id: string, values: FoodValues): Promise<void> {
-  check(
-    await supabase
-      .from('food_entries')
-      .update({ name: values.name, kcal: values.kcal, protein_g: values.proteinG, carbs_g: values.carbsG, fat_g: values.fatG })
-      .eq('id', id),
-  )
+  await submit({ kind: 'food.update', id, name: values.name, kcal: values.kcal, proteinG: values.proteinG, carbsG: values.carbsG, fatG: values.fatG })
 }
 
 export async function deleteFoodEntry(id: string): Promise<void> {
-  check(await supabase.from('food_entries').delete().eq('id', id))
+  await submit({ kind: 'food.delete', id })
 }
 
 function toPlannedMeal(row: Tables<'meal_plan_items'>): PlannedMeal[] {
@@ -100,7 +109,11 @@ function toPlannedMeal(row: Tables<'meal_plan_items'>): PlannedMeal[] {
   ]
 }
 
-export async function fetchActiveMealPlan(): Promise<ActiveMealPlan | null> {
+export function fetchActiveMealPlan(): Promise<ActiveMealPlan | null> {
+  return cachedRead('mealPlan:active', fetchActiveMealPlanFromServer)
+}
+
+async function fetchActiveMealPlanFromServer(): Promise<ActiveMealPlan | null> {
   const plan = unwrapMaybe(await supabase.from('meal_plans').select('*').eq('is_active', true).maybeSingle())
   if (!plan) return null
   const rows = unwrap(await supabase.from('meal_plan_items').select('*').eq('meal_plan_id', plan.id).order('position').limit(MEAL_LIMITS.maxItems))
@@ -122,9 +135,12 @@ export type PlanEntry = Pick<FoodEntry, 'eaten_on' | 'meal_plan_item_id' | 'stat
 
 /** Plan-bezogene Einträge eines Zeitraums (für die Wochen-Kennzahl). */
 export async function fetchPlanEntries(from: string, to: string): Promise<PlanEntry[]> {
-  return unwrap(
-    await supabase.from('food_entries').select('eaten_on, meal_plan_item_id, status').gte('eaten_on', from).lte('eaten_on', to).not('meal_plan_item_id', 'is', null),
+  const rows = await cachedRead(`food:plan:${from}:${to}`, async () =>
+    unwrap(await supabase.from('food_entries').select('*').gte('eaten_on', from).lte('eaten_on', to).not('meal_plan_item_id', 'is', null)),
+    { empty: [] },
   )
+  const merged = await withPendingFood(rows, (d) => d >= from && d <= to)
+  return merged.flatMap((e) => (e.meal_plan_item_id === null ? [] : [{ eaten_on: e.eaten_on, meal_plan_item_id: e.meal_plan_item_id, status: e.status }]))
 }
 
 /**
@@ -132,8 +148,13 @@ export async function fetchPlanEntries(from: string, to: string): Promise<PlanEn
  * Abgefragt wird in lokalen Tagesgrenzen, damit späte Trainings nicht auf den Folgetag rutschen.
  */
 export async function fetchTrainingDays(from: Date, toExclusive: Date): Promise<ReadonlySet<string>> {
-  const rows = unwrap(
-    await supabase.from('workouts').select('started_at').gte('started_at', from.toISOString()).lt('started_at', toExclusive.toISOString()).limit(200),
+  const [start, end] = [from.toISOString(), toExclusive.toISOString()]
+  const rows = await cachedRead(
+    `workouts:days:${start}|${end}`,
+    async () => unwrap(await supabase.from('workouts').select('started_at').gte('started_at', start).lt('started_at', end).limit(200)),
+    { empty: [] },
   )
-  return new Set(rows.map((w) => toISODate(new Date(w.started_at))))
+  // Offline begonnene Trainings zählen schon, bevor sie übertragen sind.
+  const local = pendingTrainingStarts(await pendingEntries()).filter((t) => t >= start && t < end)
+  return new Set([...rows.map((w) => w.started_at), ...local].map((t) => toISODate(new Date(t))))
 }

@@ -13,9 +13,11 @@ export function useWorkout(day: PlanDay, initialEntries: readonly ExerciseEntry[
   const [rest, setRest] = useState<RestState | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  // Das Workout entsteht erst mit dem ersten abgehakten Satz in der Datenbank.
+  // Das Workout entsteht erst mit dem ersten abgehakten Satz (lokal sofort, auf dem Server beim nächsten Abgleich).
   const [started, setStarted] = useState(initialWorkout !== null)
   const creating = useRef<Promise<WorkoutRow> | null>(null)
+  // Aktueller Stand auch für schnell hintereinander abgehakte Sätze, bevor React neu gerendert hat.
+  const workoutRef = useRef<WorkoutRow | null>(initialWorkout)
 
   const edit = useCallback((exerciseIndex: number, setIndex: number, patch: Partial<SetEntry>) => {
     setEntries((prev) => updateSet(prev, exerciseIndex, setIndex, patch))
@@ -28,10 +30,11 @@ export function useWorkout(day: PlanDay, initialEntries: readonly ExerciseEntry[
 
   /** Liefert das Workout und legt es beim ersten Aufruf an; parallele Aufrufe teilen sich die Anfrage. */
   async function ensureWorkout(): Promise<WorkoutRow> {
-    if (workout) return workout
+    if (workoutRef.current) return workoutRef.current
     if (!creating.current) {
       creating.current = startWorkout(day.id)
         .then((row) => {
+          workoutRef.current = row
           setWorkout(row)
           return row
         })
@@ -48,11 +51,13 @@ export function useWorkout(day: PlanDay, initialEntries: readonly ExerciseEntry[
     if (!started || !entry || !set || set.saving) return
     setError(null)
 
+    const exerciseKey = entry.planExercise.exercise_key
     if (set.loggedId !== null) {
-      const id = set.loggedId
+      const current = workoutRef.current
+      if (!current) return
       edit(exerciseIndex, setIndex, { saving: true })
       try {
-        await deleteSet(id)
+        await deleteSet({ workoutId: current.id, exerciseKey, setIndex })
         edit(exerciseIndex, setIndex, { saving: false, loggedId: null })
       } catch (err) {
         edit(exerciseIndex, setIndex, { saving: false })
@@ -66,8 +71,9 @@ export function useWorkout(day: PlanDay, initialEntries: readonly ExerciseEntry[
     edit(exerciseIndex, setIndex, { saving: true })
     try {
       const current = await ensureWorkout()
-      const row = await logSet({ workoutId: current.id, exerciseKey: entry.planExercise.exercise_key, setIndex, ...parsed })
-      edit(exerciseIndex, setIndex, { saving: false, loggedId: row.id })
+      await logSet({ workoutId: current.id, exerciseKey, setIndex, ...parsed })
+      // Lokale Kennung; geöffnet wird ein Satz über Workout, Übung und Satznummer.
+      edit(exerciseIndex, setIndex, { saving: false, loggedId: `${current.id}|${exerciseKey}|${setIndex}` })
       const seconds = entry.planExercise.rest_seconds ?? DEFAULT_REST_SECONDS
       if (seconds > 0) setRest({ endsAt: Date.now() + seconds * 1000, total: seconds })
     } catch (err) {
@@ -77,12 +83,14 @@ export function useWorkout(day: PlanDay, initialEntries: readonly ExerciseEntry[
   }
 
   async function finish(): Promise<WorkoutRow | null> {
-    if (!workout) return null
+    const current = workoutRef.current
+    if (!current) return null
     setBusy(true)
     setError(null)
     try {
-      const finished = await finishWorkout(workout.id)
+      const finished = await finishWorkout(current)
       setRest(null)
+      workoutRef.current = finished
       setWorkout(finished)
       return finished
     } catch (err) {
@@ -94,10 +102,11 @@ export function useWorkout(day: PlanDay, initialEntries: readonly ExerciseEntry[
   }
 
   async function discard(): Promise<boolean> {
-    if (!workout) return true
+    const current = workoutRef.current
+    if (!current) return true
     setBusy(true)
     try {
-      await discardWorkout(workout.id)
+      await discardWorkout(current.id)
       return true
     } catch (err) {
       setError(toMessage(err, 'Das Training konnte nicht verworfen werden.'))

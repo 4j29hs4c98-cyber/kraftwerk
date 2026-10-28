@@ -2,6 +2,7 @@ import { Link, useNavigate, useParams } from 'react-router'
 import { IconClose } from '../../app/icons'
 import { Button } from '../../components/Button'
 import { ErrorState, InlineError, LoadingState } from '../../components/States'
+import { SyncStatus } from '../../components/SyncStatus'
 import { useAsync } from '../../lib/useAsync'
 import { fetchActivePlan, type PlanDay } from '../plan/api'
 import { ExerciseList } from '../plan/DayCard'
@@ -95,6 +96,7 @@ function WorkoutSession({ loaded }: { readonly loaded: Loaded }) {
       </header>
 
       <div className="mx-auto flex max-w-2xl flex-col gap-4 px-4 pt-5">
+        <SyncStatus />
         <InlineError message={session.error} />
         {!started ? (
           <>

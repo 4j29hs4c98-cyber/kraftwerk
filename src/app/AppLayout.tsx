@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from 'react-router'
 import type { ComponentType, SVGProps } from 'react'
 import { Logo } from '../components/Logo'
+import { SyncStatus } from '../components/SyncStatus'
 import { IconFood, IconPlan, IconProfile, IconProgress, IconToday } from './icons'
 
 interface Tab {
@@ -40,6 +41,7 @@ export function AppLayout() {
       </aside>
 
       <main className="mx-auto w-full max-w-2xl px-4 pt-6 pb-28 md:px-8 md:pt-10 md:pb-12">
+        <SyncStatus className="mb-4" />
         <Outlet />
       </main>
 

@@ -1,6 +1,7 @@
 import { Navigate, Outlet, useLocation } from 'react-router'
 import { ErrorState, LoadingState } from '../components/States'
 import { useAuth } from '../features/auth/AuthProvider'
+import { useSyncTriggers } from '../lib/offline/useSync'
 import { ProfileProvider, useProfileState } from '../features/profile/ProfileProvider'
 
 function FullPage({ children }: { readonly children: React.ReactNode }) {
@@ -11,6 +12,8 @@ function FullPage({ children }: { readonly children: React.ReactNode }) {
 export function RequireAuth() {
   const { session, loading } = useAuth()
   const location = useLocation()
+  // Offline gespeicherte Einträge übertragen, sobald Netz und Anmeldung da sind.
+  useSyncTriggers()
   if (loading) return <FullPage><LoadingState label="Anmeldung wird geprüft" /></FullPage>
   if (!session) return <Navigate to="/anmelden" replace state={{ from: location.pathname }} />
   return (

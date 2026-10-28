@@ -1,3 +1,4 @@
+import { cachedRead } from '../../../lib/offline'
 import { check, supabase, unwrap, UserFacingError } from '../../../lib/supabase'
 import type { Tables } from '../../../types/database'
 import type { FoodNutrients } from './builtin'
@@ -36,8 +37,8 @@ function ensureValid(food: FoodNutrients): void {
 
 const DUPLICATE = 'Ein eigenes Lebensmittel mit diesem Namen gibt es schon.'
 
-export async function fetchFoods(): Promise<Food[]> {
-  return unwrap(await supabase.from('foods').select('*').order('name').limit(MAX_FOODS)).map(toFood)
+export function fetchFoods(): Promise<Food[]> {
+  return cachedRead('foods:own', async () => unwrap(await supabase.from('foods').select('*').order('name').limit(MAX_FOODS)).map(toFood), { empty: [] })
 }
 
 export async function createFood(food: FoodNutrients): Promise<Food> {

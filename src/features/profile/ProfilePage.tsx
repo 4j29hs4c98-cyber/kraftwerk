@@ -4,6 +4,7 @@ import { Button } from '../../components/Button'
 import { Card, PageHeader, SectionTitle } from '../../components/Card'
 import { Field } from '../../components/Field'
 import { InlineError } from '../../components/States'
+import { syncEngine } from '../../lib/offline'
 import { toMessage } from '../../lib/supabase'
 import { signOut } from '../auth/api'
 import { useAuth } from '../auth/AuthProvider'
@@ -134,6 +135,14 @@ export function ProfilePage() {
   const [busy, setBusy] = useState(false)
 
   async function handleSignOut() {
+    const { pending } = syncEngine.getSnapshot()
+    if (
+      pending > 0 &&
+      !window.confirm(
+        `${pending === 1 ? '1 Eintrag ist' : `${pending} Einträge sind`} noch nicht synchronisiert. Sie bleiben auf diesem Gerät und werden übertragen, wenn du dich hier wieder anmeldest. Trotzdem abmelden?`,
+      )
+    )
+      return
     setBusy(true)
     try {
       await signOut()

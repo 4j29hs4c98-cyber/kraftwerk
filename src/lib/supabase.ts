@@ -8,6 +8,9 @@ if (!url || !key) {
   throw new Error('Supabase-Konfiguration fehlt: VITE_SUPABASE_URL und VITE_SUPABASE_PUBLISHABLE_KEY in .env.local setzen.')
 }
 
+/** Unter diesem Schlüssel legt supabase-js die Session im localStorage ab (Standard der Bibliothek). */
+export const AUTH_STORAGE_KEY = `sb-${new URL(url).hostname.split('.')[0]}-auth-token`
+
 export const supabase = createClient<Database>(url, key, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
 })

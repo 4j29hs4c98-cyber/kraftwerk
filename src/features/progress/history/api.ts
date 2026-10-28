@@ -1,5 +1,7 @@
-import { check, supabase, unwrap } from '../../../lib/supabase'
+import { cachedRead, syncEngine } from '../../../lib/offline'
+import { check, supabase, unwrap, UserFacingError } from '../../../lib/supabase'
 import type { Tables } from '../../../types/database'
+import { referencedWorkoutIds } from '../../workout/pending'
 import { workoutDurationMs, workoutVolume } from './history'
 
 export const HISTORY_PAGE_SIZE = 20
@@ -17,7 +19,11 @@ export interface WorkoutSummary {
 const titleOf = (planDay: { title: string | null } | null, fallback = 'Training'): string => planDay?.title?.trim() || fallback
 
 /** Abgeschlossene Workouts, jüngste zuerst, seitenweise. Volumen wird aus den Sätzen der Seite berechnet. */
-export async function fetchWorkoutHistory(page: number): Promise<{ readonly items: WorkoutSummary[]; readonly hasMore: boolean }> {
+export function fetchWorkoutHistory(page: number): Promise<{ readonly items: WorkoutSummary[]; readonly hasMore: boolean }> {
+  return cachedRead(`history:${page}`, () => fetchWorkoutHistoryFromServer(page), { empty: { items: [], hasMore: false } })
+}
+
+async function fetchWorkoutHistoryFromServer(page: number): Promise<{ readonly items: WorkoutSummary[]; readonly hasMore: boolean }> {
   const from = page * HISTORY_PAGE_SIZE
   const workouts = unwrap(
     await supabase
@@ -82,6 +88,44 @@ export async function fetchWorkoutDetail(id: string): Promise<WorkoutDetail | nu
   }
 }
 
-export async function updateSetValues(id: string, weightKg: number, reps: number): Promise<void> {
+/** Hat das Training noch wartende oder abgelehnte Offline-Einträge? Dann wären direkte Korrekturen in falscher Reihenfolge. */
+export function isWaitingForSync(workoutId: string, snapshot = syncEngine.getSnapshot()): boolean {
+  return referencedWorkoutIds([...snapshot.queued.map((e) => e.op), ...snapshot.failed.map((f) => f.op)]).has(workoutId)
+}
+
+function assertSynced(workoutId: string): void {
+  if (isWaitingForSync(workoutId)) throw new UserFacingError('Dieses Training wartet noch auf Sync. Bearbeiten geht wieder, sobald alles übertragen ist.')
+}
+
+export async function updateSetValues(workoutId: string, id: string, weightKg: number, reps: number): Promise<void> {
+  assertSynced(workoutId)
   check(await supabase.from('workout_sets').update({ weight_kg: weightKg, reps }).eq('id', id))
+}
+
+/*
+ * Nachträgliche Korrekturen im Verlauf gehen direkt an den Server (nicht über die
+ * Offline-Warteschlange), damit die Detailseite danach sofort den Serverstand zeigt.
+ */
+
+export async function deleteHistorySet(workoutId: string, id: string): Promise<void> {
+  assertSynced(workoutId)
+  check(await supabase.from('workout_sets').delete().eq('id', id))
+}
+
+/** Upsert auf (workout_id, exercise_key, set_index), wie beim Abhaken im Training. */
+export async function addHistorySet(input: { workoutId: string; exerciseKey: string; setIndex: number; weightKg: number; reps: number }): Promise<void> {
+  assertSynced(input.workoutId)
+  check(
+    await supabase
+      .from('workout_sets')
+      .upsert(
+        { workout_id: input.workoutId, exercise_key: input.exerciseKey, set_index: input.setIndex, weight_kg: input.weightKg, reps: input.reps },
+        { onConflict: 'workout_id,exercise_key,set_index' },
+      ),
+  )
+}
+
+export async function deleteWorkout(id: string): Promise<void> {
+  assertSynced(id)
+  check(await supabase.from('workouts').delete().eq('id', id))
 }

@@ -1,5 +1,7 @@
+import { cachedOpenWorkouts, cachedRead, currentUserId, pendingEntries, submit, syncEngine } from '../../lib/offline'
 import { check, supabase, unwrap, unwrapMaybe } from '../../lib/supabase'
 import type { Tables } from '../../types/database'
+import { applyPendingToLastSets, applyPendingToOpenWorkout, referencedWorkoutIds } from './pending'
 import type { LoggedSet } from './progression'
 
 export type WorkoutRow = Tables<'workouts'>
@@ -10,9 +12,17 @@ const HISTORY_WORKOUTS = 30
 /** Ein offenes Workout gilt nur so lange als fortsetzbar. */
 const RESUME_WINDOW_MS = 12 * 60 * 60 * 1000
 
-/** Sätze des jeweils letzten abgeschlossenen Workouts, in dem die Übung vorkam. */
+/**
+ * Sätze des jeweils letzten abgeschlossenen Workouts, in dem die Übung vorkam.
+ * Offline aus dem Vorrat; ein lokal abgeschlossenes, noch nicht übertragenes Training hat Vorrang.
+ */
 export async function fetchLastSets(exerciseKeys: readonly string[]): Promise<ReadonlyMap<string, readonly LoggedSet[]>> {
   if (exerciseKeys.length === 0) return new Map()
+  const server = await cachedRead(`workout:lastSets:${[...exerciseKeys].sort().join(',')}`, () => fetchLastSetsFromServer(exerciseKeys), { empty: new Map() })
+  return applyPendingToLastSets(server, await pendingEntries(), exerciseKeys, await cachedOpenWorkouts())
+}
+
+async function fetchLastSetsFromServer(exerciseKeys: readonly string[]): Promise<ReadonlyMap<string, readonly LoggedSet[]>> {
   const workouts = unwrap(
     await supabase
       .from('workouts')
@@ -51,8 +61,15 @@ export interface OpenWorkout {
   readonly sets: readonly WorkoutSetRow[]
 }
 
+/** Offenes Workout des Plantags; lokal begonnene oder geänderte Trainings sind schon eingerechnet. */
 export async function findOpenWorkout(planDayId: string): Promise<OpenWorkout | null> {
   const since = new Date(Date.now() - RESUME_WINDOW_MS).toISOString()
+  const server = await cachedRead(`workout:open:${planDayId}`, () => findOpenWorkoutOnServer(planDayId, since), { empty: null })
+  const userId = currentUserId()
+  return userId ? applyPendingToOpenWorkout(server, await pendingEntries(), { planDayId, userId, since }) : server
+}
+
+async function findOpenWorkoutOnServer(planDayId: string, since: string): Promise<OpenWorkout | null> {
   const workout = unwrapMaybe(
     await supabase
       .from('workouts')
@@ -69,34 +86,43 @@ export async function findOpenWorkout(planDayId: string): Promise<OpenWorkout | 
   return { workout, sets }
 }
 
+function requireUser(): string {
+  const userId = currentUserId()
+  if (!userId) throw new Error('Nicht angemeldet')
+  return userId
+}
+
+/*
+ * Schreibzugriffe im Training laufen über die Offline-Warteschlange: Sie gelten
+ * sofort lokal und werden in Reihenfolge übertragen, sobald Netz da ist.
+ */
+
+/** Legt das Workout lokal mit eigener id an; auf dem Server entsteht es per upsert auf diese id. */
 export async function startWorkout(planDayId: string): Promise<WorkoutRow> {
-  return unwrap(await supabase.from('workouts').insert({ plan_day_id: planDayId }).select('*').single())
+  const now = new Date().toISOString()
+  const row: WorkoutRow = { id: crypto.randomUUID(), user_id: requireUser(), plan_day_id: planDayId, started_at: now, finished_at: null, created_at: now }
+  await submit({ kind: 'workout.start', id: row.id, planDayId, startedAt: row.started_at })
+  return row
 }
 
 /** Upsert auf (workout_id, exercise_key, set_index): doppeltes Abhaken erzeugt keine zweite Zeile. */
-export async function logSet(input: { workoutId: string; exerciseKey: string; setIndex: number; weightKg: number; reps: number }): Promise<WorkoutSetRow> {
-  return unwrap(
-    await supabase
-      .from('workout_sets')
-      .upsert(
-        { workout_id: input.workoutId, exercise_key: input.exerciseKey, set_index: input.setIndex, weight_kg: input.weightKg, reps: input.reps },
-        { onConflict: 'workout_id,exercise_key,set_index' },
-      )
-      .select('*')
-      .single(),
-  )
+export async function logSet(input: { workoutId: string; exerciseKey: string; setIndex: number; weightKg: number; reps: number }): Promise<void> {
+  await submit({ kind: 'set.upsert', ...input })
 }
 
-export async function deleteSet(id: string): Promise<void> {
-  check(await supabase.from('workout_sets').delete().eq('id', id))
+/** Öffnet einen abgehakten Satz wieder; gelöscht wird über den fachlichen Schlüssel, nicht über die id. */
+export async function deleteSet(input: { workoutId: string; exerciseKey: string; setIndex: number }): Promise<void> {
+  await submit({ kind: 'set.delete', ...input })
 }
 
-export async function finishWorkout(workoutId: string): Promise<WorkoutRow> {
-  return unwrap(await supabase.from('workouts').update({ finished_at: new Date().toISOString() }).eq('id', workoutId).select('*').single())
+export async function finishWorkout(workout: WorkoutRow): Promise<WorkoutRow> {
+  const finishedAt = new Date().toISOString()
+  await submit({ kind: 'workout.finish', id: workout.id, finishedAt })
+  return { ...workout, finished_at: finishedAt }
 }
 
 export async function discardWorkout(workoutId: string): Promise<void> {
-  check(await supabase.from('workouts').delete().eq('id', workoutId))
+  await submit({ kind: 'workout.delete', id: workoutId })
 }
 
 export interface StaleWorkout {
@@ -111,12 +137,18 @@ export interface StaleWorkout {
 /**
  * Räumt offene Workouts auf, die älter als das Fortsetzungsfenster sind:
  * ohne Sätze werden sie gelöscht, mit Sätzen zum Abschließen zurückgegeben.
+ * Workouts mit noch nicht übertragenen Änderungen bleiben unberührt, bis der Abgleich durch ist.
  */
 export async function cleanupStaleWorkouts(): Promise<StaleWorkout[]> {
+  // Löscht auf dem Server; ohne Netz wird gar nicht erst aufgeräumt.
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return []
   const before = new Date(Date.now() - RESUME_WINDOW_MS).toISOString()
-  const open = unwrap(
+  const { failed } = syncEngine.getSnapshot()
+  const busy = referencedWorkoutIds([...(await pendingEntries()).map((e) => e.op), ...failed.map((f) => f.op)])
+  const rows = unwrap(
     await supabase.from('workouts').select('id, started_at, plan_day_id').is('finished_at', null).lt('started_at', before).order('started_at').limit(50),
   )
+  const open = rows.filter((w) => !busy.has(w.id))
   if (open.length === 0) return []
   const sets = unwrap(await supabase.from('workout_sets').select('workout_id, created_at').in('workout_id', open.map((w) => w.id)))
   const empty = open.filter((w) => !sets.some((s) => s.workout_id === w.id))

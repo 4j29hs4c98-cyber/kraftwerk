@@ -4,7 +4,7 @@ import { InlineError } from '../../components/States'
 import type { FoodEntry, FoodValues } from './api'
 import { FoodForm } from './FoodForm'
 import { toFoodForm } from './foodInput'
-import { entryMacros, macroLine } from './PlannedMeals'
+import { entryMacros, macroLine } from './macroLine'
 
 interface Props {
   readonly entries: readonly FoodEntry[]

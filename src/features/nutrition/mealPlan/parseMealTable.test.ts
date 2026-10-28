@@ -54,10 +54,59 @@ describe('parseMealTable', () => {
     const result = parseMealTable(rows)
     expect(result.errors).toEqual([])
     expect(importErrors(result)).toEqual([])
-    expect(result.items).toHaveLength(3)
-    expect(result.items.map((i) => i.dayKey)).toEqual(['alle', 'training', 'ruhe'])
-    expect(result.items[1]).toMatchObject({ mealSlot: 'vor_training', kcal: 420, proteinG: 35, carbsG: 55, fatG: 5, row: 3 })
-    expect(result.items[1]?.notes).toContain('Carb-Loading')
+    expect(result.items).toHaveLength(7)
+    expect(result.items.map((i) => i.dayKey)).toEqual(['alle', 'alle', 'alle', 'alle', 'alle', 'training', 'ruhe'])
+    expect(result.items[5]).toMatchObject({ mealSlot: 'vor_training', kcal: 420, proteinG: 35, carbsG: 55, fatG: 5, row: 7, variant: null })
+    expect(result.items[5]?.notes).toContain('Carb-Loading')
+    expect(result.items.map((i) => i.variant)).toEqual([null, 'Hähnchen mit Reis', 'Hähnchen mit Reis', 'Lachs mit Kartoffeln', 'Lachs mit Kartoffeln', null, null])
+  })
+
+  it('detects the variant column under several names', () => {
+    for (const header of ['Variante', 'Option', 'Gericht', 'Optionen']) {
+      const result = parseMealTable([
+        ['Mahlzeit', header, 'Lebensmittel', 'kcal'],
+        ['Mittag', 'Pasta', 'Nudeln', '400'],
+      ])
+      expect(result.errors).toEqual([])
+      expect(result.items[0]).toMatchObject({ name: 'Nudeln', variant: 'Pasta' })
+    }
+  })
+
+  it('treats "Gericht" as the name when there is no food column', () => {
+    const result = parseMealTable([
+      ['Mahlzeit', 'Gericht', 'kcal'],
+      ['Mittag', 'Pasta', '400'],
+    ])
+    expect(result.items[0]).toMatchObject({ name: 'Pasta', variant: null })
+  })
+
+  it('inherits empty variant cells within the same meal, "-" clears them', () => {
+    const result = parseMealTable([
+      ['Tag', 'Mahlzeit', 'Variante', 'Lebensmittel'],
+      ['Montag', 'Mittag', 'Pasta', 'Nudeln'],
+      ['', '', '', 'Tomatensoße'],
+      ['', '', 'Bowl', 'Reis'],
+      ['', '', '-', 'Salat'],
+      ['', 'Abend', '', 'Brot'],
+      ['Dienstag', 'Mittag', '', 'Suppe'],
+    ])
+    expect(result.errors).toEqual([])
+    expect(result.items.map((i) => [i.name, i.variant])).toEqual([
+      ['Nudeln', 'Pasta'],
+      ['Tomatensoße', 'Pasta'],
+      ['Reis', 'Bowl'],
+      ['Salat', null],
+      ['Brot', null],
+      ['Suppe', null],
+    ])
+  })
+
+  it('rejects variant names longer than 60 characters', () => {
+    const result = parseMealTable([
+      ['Mahlzeit', 'Variante', 'Lebensmittel'],
+      ['Mittag', 'x'.repeat(61), 'Reis'],
+    ])
+    expect(result.errors[0]).toContain('Zeile 2: Variante')
   })
 
   it('detects synonyms and inherits empty day and meal cells', () => {

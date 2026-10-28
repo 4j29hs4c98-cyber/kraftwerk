@@ -2,7 +2,7 @@ import { normalizeName } from '../../plan/exercises'
 import { cellText, type Cell, type TableRow } from '../../plan/import/parsePlanTable'
 import { MEAL_LIMITS, validateMealItems, type DayKey, type MealItem, type MealSlot } from './model'
 
-type Column = 'day' | 'slot' | 'name' | 'amount' | 'kcal' | 'protein' | 'carbs' | 'fat' | 'notes'
+type Column = 'day' | 'slot' | 'name' | 'variant' | 'amount' | 'kcal' | 'protein' | 'carbs' | 'fat' | 'notes'
 
 export interface ImportedMealItem extends MealItem {
   /** Zeilennummer in der Datei (1-basiert, wie in Excel). */
@@ -18,7 +18,8 @@ export interface MealImportResult {
 const HEADER_SCAN_ROWS = 10
 
 const HEADER_RULES: readonly (readonly [Column, (h: string) => boolean])[] = [
-  ['name', (h) => h.startsWith('lebensmittel') || ['name', 'gericht', 'essen', 'food', 'speise', 'produkt', 'mahlzeit name'].includes(h)],
+  ['name', (h) => h.startsWith('lebensmittel') || ['name', 'essen', 'food', 'speise', 'produkt', 'zutat', 'zutaten', 'mahlzeit name'].includes(h)],
+  ['variant', (h) => h.startsWith('variante') || h.startsWith('option') || ['gericht', 'gerichtname', 'alternative', 'variant'].includes(h)],
   ['slot', (h) => h.startsWith('mahlzeit') || ['slot', 'meal', 'zeitpunkt', 'uhrzeit'].includes(h)],
   ['day', (h) => ['tag', 'tage', 'wochentag', 'day', 'gilt fuer', 'gueltig', 'gueltig an'].includes(h)],
   ['amount', (h) => h.startsWith('menge') || ['portion', 'amount', 'portionsgroesse'].includes(h)],
@@ -30,11 +31,15 @@ const HEADER_RULES: readonly (readonly [Column, (h: string) => boolean])[] = [
 ]
 
 function detectColumns(row: TableRow): Partial<Record<Column, number>> {
-  return row.reduce<Partial<Record<Column, number>>>((cols, cell, index) => {
+  const cols = row.reduce<Partial<Record<Column, number>>>((found, cell, index) => {
     const h = normalizeName(cellText(cell))
-    const match = HEADER_RULES.find(([col, test]) => cols[col] === undefined && h !== '' && test(h))
-    return match ? { ...cols, [match[0]]: index } : cols
+    const match = HEADER_RULES.find(([col, test]) => found[col] === undefined && h !== '' && test(h))
+    return match ? { ...found, [match[0]]: index } : found
   }, {})
+  // Ohne eigene Spalte "Lebensmittel" ist "Gericht" der Name (ältere Vorlagen), keine Variante.
+  const variantHeader = cols.variant === undefined ? '' : normalizeName(cellText(row[cols.variant]))
+  if (cols.name === undefined && variantHeader === 'gericht') return { ...cols, name: cols.variant, variant: undefined }
+  return cols
 }
 
 const DAY_WORDS: Readonly<Record<string, DayKey>> = {
@@ -94,6 +99,7 @@ const cellAt = (row: TableRow, index: number | undefined): Cell => (index === un
 interface RowState {
   readonly day: DayKey | null
   readonly slot: MealSlot | null
+  readonly variant: string | null
 }
 
 function readNumber(row: TableRow, index: number | undefined, label: string, max: number, at: string, errors: string[]): number | null {
@@ -117,6 +123,10 @@ function parseRow(row: TableRow, cols: Partial<Record<Column, number>>, rowNumbe
   if (dayText && !day) rowErrors.push(`${at}: Tag "${dayText}" nicht erkannt (Montag bis Sonntag, Trainingstag, Ruhetag oder Täglich).`)
   if (slotText && !slot) rowErrors.push(`${at}: Mahlzeit "${slotText}" nicht erkannt (z. B. Frühstück, Mittagessen, Vor dem Training).`)
   if (!slotText && !slot) rowErrors.push(`${at}: Mahlzeit fehlt.`)
+  // Leere Varianten-Zelle gehört zur Zeile darüber, solange Tag und Mahlzeit weiterlaufen; "-" heißt "keine Variante".
+  const variantText = get(row, cols.variant)
+  const variant = isDash(variantText) ? (variantText === '' && !dayText && !slotText ? state.variant : null) : variantText
+  if ((variant?.length ?? 0) > MEAL_LIMITS.variantMax) rowErrors.push(`${at}: Variante ist länger als ${MEAL_LIMITS.variantMax} Zeichen.`)
 
   const name = get(row, cols.name)
   if (name.length > MEAL_LIMITS.nameMax) rowErrors.push(`${at}: Name ist länger als ${MEAL_LIMITS.nameMax} Zeichen.`)
@@ -132,7 +142,7 @@ function parseRow(row: TableRow, cols: Partial<Record<Column, number>>, rowNumbe
   const carbsG = readNumber(row, cols.carbs, 'Kohlenhydrate', MEAL_LIMITS.macroMax, at, rowErrors)
   const fatG = readNumber(row, cols.fat, 'Fett', MEAL_LIMITS.macroMax, at, rowErrors)
 
-  const nextState: RowState = { day: day ?? state.day, slot: slot ?? state.slot }
+  const nextState: RowState = { day: day ?? state.day, slot: slot ?? state.slot, variant }
   if (rowErrors.length > 0 || !day || !slot) {
     errors.push(...rowErrors)
     return { item: null, state: nextState }
@@ -148,6 +158,7 @@ function parseRow(row: TableRow, cols: Partial<Record<Column, number>>, rowNumbe
     carbsG,
     fatG,
     notes,
+    variant,
   }
   return { item, state: nextState }
 }
@@ -169,7 +180,7 @@ export function parseMealTable(rows: readonly TableRow[]): MealImportResult {
   if (cols.kcal === undefined) warnings.push('Keine Spalte "kcal": Kalorien bleiben leer.')
 
   const items: ImportedMealItem[] = []
-  let state: RowState = { day: null, slot: null }
+  let state: RowState = { day: null, slot: null, variant: null }
   rows.slice(headerIndex + 1).forEach((row, offset) => {
     const rowNumber = headerIndex + offset + 2
     if (row.every((c) => cellText(c) === '')) return

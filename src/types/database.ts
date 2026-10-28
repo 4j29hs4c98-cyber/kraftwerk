@@ -47,6 +47,7 @@ export type Database = {
           created_at: string
           eaten_on: string
           fat_g: number | null
+          grams: number | null
           id: string
           kcal: number | null
           meal_plan_item_id: string | null
@@ -61,6 +62,7 @@ export type Database = {
           created_at?: string
           eaten_on?: string
           fat_g?: number | null
+          grams?: number | null
           id?: string
           kcal?: number | null
           meal_plan_item_id?: string | null
@@ -75,6 +77,7 @@ export type Database = {
           created_at?: string
           eaten_on?: string
           fat_g?: number | null
+          grams?: number | null
           id?: string
           kcal?: number | null
           meal_plan_item_id?: string | null
@@ -94,6 +97,42 @@ export type Database = {
           },
         ]
       }
+      foods: {
+        Row: {
+          carbs_100: number
+          created_at: string
+          default_grams: number | null
+          fat_100: number
+          id: string
+          kcal_100: number
+          name: string
+          protein_100: number
+          user_id: string
+        }
+        Insert: {
+          carbs_100: number
+          created_at?: string
+          default_grams?: number | null
+          fat_100: number
+          id?: string
+          kcal_100: number
+          name: string
+          protein_100: number
+          user_id?: string
+        }
+        Update: {
+          carbs_100?: number
+          created_at?: string
+          default_grams?: number | null
+          fat_100?: number
+          id?: string
+          kcal_100?: number
+          name?: string
+          protein_100?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
       meal_plan_items: {
         Row: {
           amount: string | null
@@ -110,6 +149,7 @@ export type Database = {
           position: number
           protein_g: number | null
           user_id: string
+          variant: string | null
         }
         Insert: {
           amount?: string | null
@@ -126,6 +166,7 @@ export type Database = {
           position: number
           protein_g?: number | null
           user_id?: string
+          variant?: string | null
         }
         Update: {
           amount?: string | null
@@ -142,6 +183,7 @@ export type Database = {
           position?: number
           protein_g?: number | null
           user_id?: string
+          variant?: string | null
         }
         Relationships: [
           {

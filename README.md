@@ -62,13 +62,14 @@ src/
     profile/      Profil-Typen, Auswahl-Felder, Einstellungen
     plan/         Übungsbibliothek, Plangenerator (rein, getestet), Plan-Ansicht, Editor (editor/), Excel-Import (import/)
     workout/      Workout-Modus, Progression (rein, getestet), Pausen-Timer
-    nutrition/    Kalorien- und Makroziele (rein, getestet), Tagesprotokoll, Ernährungsplan (mealPlan/: Modell, Import, Editor, Planeinhaltung)
+    nutrition/    Kalorien- und Makroziele (rein, getestet), Tagesprotokoll, Ernährungsplan (mealPlan/: Modell, Varianten, Import, Editor, Planeinhaltung),
+                  Lebensmittel (foods/: Grundliste, Grammrechnung, eigene Lebensmittel)
     progress/     Kalender, Wochenserie, Kurven (charts/: eigene SVG-Kurven, Rechenlogik getestet), Trainingsverlauf (history/)
     home/         Startseite, Heute-Ansicht mit Pausen-Anzeige (pause.ts, getestet), 404
 ```
 
 Datenzugriff liegt pro Feature in `api.ts`. Reine Logik (`generator.ts`, `progression.ts`, `session.ts`, `calc.ts`, `streak.ts`, `chartMath.ts`,
-`parseMealTable.ts`, `pause.ts` und weitere) hat keine
+`parseMealTable.ts`, `variants.ts`, `foodMath.ts`, `pause.ts` und weitere) hat keine
 Abhängigkeit zu React oder Supabase und ist mit Vitest abgedeckt.
 
 ## Fachliche Regeln
@@ -85,7 +86,18 @@ Abhängigkeit zu React oder Supabase und ist mit Vitest abgedeckt.
 - **Ernährungsplan heute:** Es gelten die Einträge des Wochentags, "Täglich" und je nach Tag "Trainingstag" oder "Ruhetag". Trainingstag ist, wenn an dem Tag
   ein Workout begonnen wurde (abgeschlossen oder offen) oder der Trainingsplan mit Wochentagen den Tag als Trainingstag führt (Ruhetag oder Wochentag
   ohne Eintrag: Ruhetag). Der Schalter auf der Ernährungsseite überstimmt das für den Tag und wird pro Datum im Browser gemerkt (60 Tage). "Plan eingehalten" zählt von Montag
-  bis heute die Mahlzeiten mit "Wie geplant"; ersetzte Mahlzeiten zählen nicht.
+  bis heute die Mahlzeiten mit "Wie geplant"; ersetzte Mahlzeiten zählen nicht. Eine Mahlzeit mit Varianten zählt einmal und ist eingehalten,
+  wenn alle Zutaten einer Variante wie geplant gegessen wurden.
+- **Varianten (Gerichte):** Plan-Einträge mit gleichem Tag, gleicher Mahlzeit und gleicher Variante (`meal_plan_items.variant`) bilden ein Gericht,
+  verschiedene Varianten einer Mahlzeit sind Alternativen, Einträge ohne Variante gelten immer. In der Tagesansicht erscheinen sie als Wisch-Kacheln
+  (CSS scroll-snap) mit Zutaten, Summe und Budget-Hinweis: verbleibendes Tagesbudget = Ziel minus alles schon Eingetragene (ohne diese Mahlzeit),
+  also "passt, danach noch X kcal frei" oder "+X kcal über Budget". Antippen wählt die Variante (pro Datum und Mahlzeit im Browser gemerkt, 60 Tage),
+  "Wie geplant" hakt alle Zutaten der gewählten Variante ab. Eine schon abgehakte Variante bleibt ausgewählt, bis sie rückgängig gemacht wird.
+- **Lebensmittel:** Freie Einträge lassen sich über die Suche "Lebensmittel" aus eigenen Lebensmitteln (Tabelle `foods`) und der Grundliste
+  (`foods/builtin.ts`, Durchschnittswerte pro 100 g, roh oder gekocht steht im Namen) füllen. Menge in Gramm (vorbefüllt mit der typischen Portion),
+  kcal ganzzahlig und Makros auf eine Nachkommastelle werden berechnet und sind überschreibbar; gespeichert wird mit `food_entries.grams`.
+  Eigene Lebensmittel überdecken gleichnamige der Grundliste und werden unter "Meine Lebensmittel" angelegt, bearbeitet und gelöscht. Ein manueller
+  Eintrag kann als eigenes Lebensmittel gespeichert werden: mit Gramm werden die Werte auf 100 g zurückgerechnet, ohne Gramm gelten sie als pro 100 g.
 - **Pausen-Anzeige:** Kalendertage seit dem letzten abgeschlossenen Training (lokal). 0 bis 7 grün, 8 bis 14 gelb, 15 bis 21 orange, ab 22 rot.
 - **Kurven:** Kraft aus der RPC `exercise_progress` (höchstes Gewicht und geschätztes 1RM nach Epley je Trainingstag). Körpergewicht und Körperfett
   als Tageswerte plus gleitender 7-Tage-Schnitt; die Zusammenfassung vergleicht den Schnitt über die letzten 4 Wochen.
@@ -120,15 +132,18 @@ Auf der Plan-Seite unter "Plan aus Excel importieren" (.xlsx oder .csv, höchste
 ## Ernährungsplan-Import (Excel oder CSV)
 
 Auf der Ernährungsseite unter "Ernährungsplan" > "Importieren" (.xlsx oder .csv, höchstens 2 MB). "Vorlage herunterladen" liefert eine CSV-Vorlage
-mit drei Beispielzeilen (täglich, Trainingstag mit Carb-Loading vor dem Training, Ruhetag).
+mit Beispielen (täglich, zwei Varianten fürs Mittagessen, Trainingstag mit Carb-Loading vor dem Training, Ruhetag).
 
 - **Eine Zeile pro Lebensmittel**, darüber eine Kopfzeile. Spaltennamen werden tolerant erkannt (Groß/Klein, Umlaute, Einheiten in Klammern):
   `Tag`/`Wochentag`, `Mahlzeit` (Pflicht), `Lebensmittel`/`Name` (Pflicht), `Menge`, `kcal`/`Kalorien`, `Eiweiß`/`Protein`,
-  `Kohlenhydrate`/`KH`/`Carbs`, `Fett`, `Hinweis`/`Notiz`.
+  `Kohlenhydrate`/`KH`/`Carbs`, `Fett`, `Hinweis`/`Notiz`, optional `Variante`/`Option`/`Gericht` (ohne eigene Spalte `Lebensmittel`
+  gilt `Gericht` weiter als Name).
+- **Variante:** Zeilen mit gleicher Variante in Tag und Mahlzeit bilden ein Gericht, verschiedene Varianten sind Alternativen. Eine leere Zelle gehört
+  zur Variante darüber, solange Tag und Mahlzeit weiterlaufen; `-` heißt ausdrücklich "keine Variante". Höchstens 60 Zeichen.
 - **Tag:** Montag bis Sonntag (auch Mo, Di ...), `Trainingstag`, `Ruhetag`, `Täglich`/`Alle`. Ohne Tag-Spalte gilt alles täglich.
 - **Mahlzeit:** Frühstück, Snack vormittags, Mittag(essen), Snack nachmittags, Abend(essen), Vor dem Training, Nach dem Training, Spät/Spätmahlzeit.
 - Leere Tag- oder Mahlzeit-Zellen gehören zur Zeile darüber. Zeilen mit Lebensmittel "-" werden übersprungen.
 - **Zahlen:** deutsche Dezimalkommas (`32,5`), Einheiten werden ignoriert (`160 kcal`, `12 g`), leere Zellen bleiben leer.
-- **Grenzen:** 1 bis 300 Einträge, Name 120, Menge 60 und Hinweis 300 Zeichen, kcal 0 bis 5000, Makros 0 bis 1000 g.
+- **Grenzen:** 1 bis 600 Einträge, Name 120, Menge 60 und Hinweis 300 Zeichen, kcal 0 bis 5000, Makros 0 bis 1000 g.
   Fehler werden pro Zeile angezeigt; gespeichert wird erst nach der Vorschau mit "Übernehmen" (RPC `create_meal_plan`, ersetzt den aktiven Plan).
-- Im Editor lassen sich Einträge hinzufügen, ändern und löschen; Speichern übergibt immer die komplette Liste an `create_meal_plan`.
+- Im Editor lassen sich Einträge hinzufügen, ändern und löschen, Varianten anlegen ("Neue Variante"), umbenennen und um Zutaten ergänzen; Speichern übergibt immer die komplette Liste an `create_meal_plan`.

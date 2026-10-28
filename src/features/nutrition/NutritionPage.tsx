@@ -25,12 +25,17 @@ import {
 } from './api'
 import { ageFromBirthYear, calculateTarget, type NutritionTarget } from './calc'
 import { EntryList } from './EntryList'
-import { FoodForm } from './FoodForm'
+import { createFood, fetchFoods } from './foods/api'
+import { BUILTIN_FOODS } from './foods/builtin'
+import { mergeFoods } from './foods/foodMath'
+import { FreeEntry } from './foods/FreeEntry'
+import { MyFoodsPanel } from './foods/MyFoodsPanel'
 import { MacroCard } from './MacroCard'
 import { daysOfWeekUntil, weekAdherence } from './mealPlan/adherence'
 import { MealImportPanel } from './mealPlan/MealImportPanel'
 import { MealPlanEditor } from './mealPlan/MealPlanEditor'
-import { itemsForDay } from './mealPlan/model'
+import { itemsForDay, type MealSlot } from './mealPlan/model'
+import { loadVariantChoices, saveVariantChoices, withVariantChoice, type VariantChoices } from './mealPlan/variantChoice'
 import { PlannedMeals } from './PlannedMeals'
 import { defaultTrainingDay, loadOverrides, saveOverrides, type TrainingOverrides } from './trainingDay'
 import { TrainingDayToggle } from './TrainingDayToggle'
@@ -84,7 +89,7 @@ async function withMessage(action: () => Promise<unknown>, fallback: string): Pr
   }
 }
 
-type Mode = 'view' | 'edit' | 'import'
+type Mode = 'view' | 'edit' | 'import' | 'foods'
 
 export function NutritionPage() {
   const [day, setDay] = useState(() => toISODate(new Date()))
@@ -93,7 +98,10 @@ export function NutritionPage() {
   const [mode, setMode] = useState<Mode>('view')
   /** Manuell gesetzter Trainings- oder Ruhetag je Datum (im Browser gemerkt); sonst gilt der Standard aus Training und Wochenplan. */
   const [trainingOverride, setTrainingOverride] = useState<TrainingOverrides>(loadOverrides)
+  /** Gewählte Gericht-Variante je Datum und Mahlzeit (im Browser gemerkt). */
+  const [variantChoices, setVariantChoices] = useState<VariantChoices>(loadVariantChoices)
   const target = useTarget()
+  const ownFoods = useAsync(fetchFoods, [])
   const entries = useAsync(() => fetchFoodEntries(day), [day])
   const mealPlan = useAsync(fetchActiveMealPlan, [])
   // Der Trainingsplan liefert nur den Standard für den Schalter; fehlt er, gilt das bisherige Verhalten.
@@ -112,6 +120,9 @@ export function NutritionPage() {
 
   const list: readonly FoodEntry[] = entries.status === 'ready' ? entries.data : []
   const plan = mealPlan.status === 'ready' ? mealPlan.data : null
+  const own = ownFoods.status === 'ready' ? ownFoods.data : []
+  const foods = mergeFoods(own, BUILTIN_FOODS)
+  const targetKcal = target.status === 'ready' && target.data ? target.data.kcal : null
   const dayDefault = defaultTrainingDay(parseISODate(day), dayTraining.status === 'ready' && dayTraining.data.has(day), planDays)
   const isTrainingDay = trainingOverride[day] ?? dayDefault.isTrainingDay
   const todaysItems: readonly PlannedMeal[] = plan ? itemsForDay(plan.items, parseISODate(day), isTrainingDay) : []
@@ -135,20 +146,27 @@ export function NutritionPage() {
     week.reload()
   }
 
-  const addPlanned = (item: PlannedMeal) =>
+  /** Hakt Plan-Einträge nacheinander ab (bei Varianten alle Zutaten); schon eingetragene werden übersprungen. */
+  const addPlanned = (items: readonly PlannedMeal[]) =>
     withMessage(async () => {
-      await addFoodEntry({
-        eatenOn: day,
-        name: item.name,
-        kcal: item.kcal ?? 0,
-        proteinG: item.proteinG ?? 0,
-        carbsG: item.carbsG,
-        fatG: item.fatG,
-        mealSlot: item.mealSlot,
-        mealPlanItemId: item.id,
-        status: 'wie_geplant',
-      })
-      refresh()
+      const missing = items.filter((item) => !list.some((e) => e.meal_plan_item_id === item.id))
+      try {
+        for (const item of missing) {
+          await addFoodEntry({
+            eatenOn: day,
+            name: item.name,
+            kcal: item.kcal ?? 0,
+            proteinG: item.proteinG ?? 0,
+            carbsG: item.carbsG,
+            fatG: item.fatG,
+            mealSlot: item.mealSlot,
+            mealPlanItemId: item.id,
+            status: 'wie_geplant',
+          })
+        }
+      } finally {
+        refresh()
+      }
     }, 'Die Mahlzeit konnte nicht eingetragen werden.')
 
   const addReplacement = (item: PlannedMeal, values: FoodValues) =>
@@ -157,11 +175,23 @@ export function NutritionPage() {
       refresh()
     }, 'Der Eintrag konnte nicht gespeichert werden.')
 
-  const addFree = (values: FoodValues) =>
+  const addFree = (values: FoodValues, grams: number | null) =>
     withMessage(async () => {
-      await addFoodEntry({ eatenOn: day, ...values, mealSlot: null, mealPlanItemId: null, status: 'frei' })
+      await addFoodEntry({ eatenOn: day, ...values, grams, mealSlot: null, mealPlanItemId: null, status: 'frei' })
       refresh()
     }, 'Der Eintrag konnte nicht gespeichert werden.')
+
+  const saveOwnFood = (food: Parameters<typeof createFood>[0]) =>
+    withMessage(async () => {
+      await createFood(food)
+      ownFoods.reload()
+    }, 'Das Lebensmittel konnte nicht gespeichert werden.')
+
+  function chooseVariant(slot: MealSlot, name: string) {
+    const next = withVariantChoice(variantChoices, day, slot, name, today)
+    setVariantChoices(next)
+    saveVariantChoices(next)
+  }
 
   const edit = (entry: FoodEntry, values: FoodValues) =>
     withMessage(async () => {
@@ -175,13 +205,33 @@ export function NutritionPage() {
       refresh()
     }, 'Der Eintrag konnte nicht gelöscht werden.')
 
+  const removeMany = (toRemove: readonly FoodEntry[]) =>
+    withMessage(async () => {
+      try {
+        for (const entry of toRemove) await deleteFoodEntry(entry.id)
+      } finally {
+        refresh()
+      }
+    }, 'Der Eintrag konnte nicht gelöscht werden.')
+
   function planChanged() {
     setMode('view')
     mealPlan.reload()
     week.reload()
   }
 
-  if (mode !== 'view' && mealPlan.status === 'ready') {
+  if (mode === 'foods') {
+    return (
+      <>
+        <PageHeader eyebrow="Nährwerte pro 100 g" title="Ernährung" />
+        {ownFoods.status === 'loading' && <LoadingState label="Lebensmittel werden geladen" />}
+        {ownFoods.status === 'error' && <ErrorState message={ownFoods.message} onRetry={ownFoods.reload} />}
+        {ownFoods.status === 'ready' && <MyFoodsPanel own={ownFoods.data} onChanged={ownFoods.reload} onClose={() => setMode('view')} />}
+      </>
+    )
+  }
+
+  if ((mode === 'edit' || mode === 'import') && mealPlan.status === 'ready') {
     return (
       <>
         <PageHeader eyebrow="Dein Ernährungsplan" title="Ernährung" />
@@ -259,14 +309,35 @@ export function NutritionPage() {
           {todaysItems.length === 0 ? (
             <EmptyState title="Für diesen Tag ist nichts geplant">Dein Plan enthält keine Mahlzeiten für diesen Wochentag.</EmptyState>
           ) : (
-            entries.status === 'ready' && <PlannedMeals items={todaysItems} entries={list} onPlanned={addPlanned} onReplace={addReplacement} onEdit={edit} onUndo={remove} />
+            entries.status === 'ready' && (
+              <PlannedMeals
+                items={todaysItems}
+                entries={list}
+                targetKcal={targetKcal}
+                choices={variantChoices[day] ?? {}}
+                onChoose={chooseVariant}
+                onPlanned={addPlanned}
+                onReplace={addReplacement}
+                onEdit={edit}
+                onUndo={removeMany}
+              />
+            )
           )}
         </>
       )}
 
       <Card className="mt-6 mb-4">
-        <SectionTitle>Freien Eintrag hinzufügen</SectionTitle>
-        <FoodForm onSubmit={addFree} />
+        <SectionTitle
+          action={
+            <button type="button" onClick={() => setMode('foods')} className="min-h-11 rounded-lg px-2 text-sm font-semibold text-accent hover:bg-surface-2">
+              Meine Lebensmittel{own.length > 0 ? ` (${own.length})` : ''}
+            </button>
+          }
+        >
+          Freien Eintrag hinzufügen
+        </SectionTitle>
+        <FreeEntry foods={foods} onAdd={addFree} onSaveFood={saveOwnFood} />
+        {ownFoods.status === 'error' && <p className="mt-2 text-xs text-muted">Eigene Lebensmittel konnten nicht geladen werden, die Grundliste steht trotzdem bereit.</p>}
       </Card>
 
       <SectionTitle>Weitere Einträge</SectionTitle>

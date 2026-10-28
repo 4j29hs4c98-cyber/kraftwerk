@@ -5,50 +5,62 @@ import { InlineError } from '../../components/States'
 import type { FoodEntry, FoodValues, PlannedMeal } from './api'
 import { FoodForm } from './FoodForm'
 import { toFoodForm } from './foodInput'
-import { groupBySlot, SLOT_LABELS } from './mealPlan/model'
+import { entryMacros, macroLine } from './macroLine'
+import { SLOT_LABELS, type MealSlot } from './mealPlan/model'
+import { groupSlotVariants } from './mealPlan/variants'
+import { VariantPicker } from './VariantPicker'
 
-const NUMBER = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 1 })
-
-export function macroLine(v: { kcal: number | null; proteinG: number | null; carbsG: number | null; fatG: number | null }): string {
-  const parts = [
-    v.kcal === null ? null : `${v.kcal} kcal`,
-    v.proteinG === null ? null : `${NUMBER.format(v.proteinG)} g E`,
-    v.carbsG === null ? null : `${NUMBER.format(v.carbsG)} g KH`,
-    v.fatG === null ? null : `${NUMBER.format(v.fatG)} g F`,
-  ]
-  return parts.filter(Boolean).join(' · ')
-}
-
-export const entryMacros = (e: FoodEntry) => ({ kcal: e.kcal, proteinG: e.protein_g, carbsG: e.carbs_g, fatG: e.fat_g })
-
-interface Props {
-  readonly items: readonly PlannedMeal[]
-  readonly entries: readonly FoodEntry[]
-  readonly onPlanned: (item: PlannedMeal) => Promise<void>
+interface Actions {
+  readonly onPlanned: (items: readonly PlannedMeal[]) => Promise<void>
   readonly onReplace: (item: PlannedMeal, values: FoodValues) => Promise<void>
   readonly onEdit: (entry: FoodEntry, values: FoodValues) => Promise<void>
-  readonly onUndo: (entry: FoodEntry) => Promise<void>
+  readonly onUndo: (entries: readonly FoodEntry[]) => Promise<void>
 }
 
-/** Mahlzeiten des Plans für einen Tag, gruppiert nach Mahlzeit. */
-export function PlannedMeals({ items, entries, ...actions }: Props) {
+interface Props extends Actions {
+  readonly items: readonly PlannedMeal[]
+  readonly entries: readonly FoodEntry[]
+  readonly targetKcal: number | null
+  /** Gemerkte Variante je Mahlzeit für den angezeigten Tag. */
+  readonly choices: Readonly<Partial<Record<MealSlot, string>>>
+  readonly onChoose: (slot: MealSlot, name: string) => void
+}
+
+/** Mahlzeiten des Plans für einen Tag, gruppiert nach Mahlzeit; Varianten als Wisch-Kacheln. */
+export function PlannedMeals({ items, entries, targetKcal, choices, onChoose, ...actions }: Props) {
   return (
     <div className="flex flex-col gap-4">
-      {groupBySlot(items).map((group) => (
+      {groupSlotVariants(items).map((group) => (
         <section key={group.slot} aria-label={SLOT_LABELS[group.slot]}>
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-muted">{SLOT_LABELS[group.slot]}</h3>
-          <ul className="divide-y divide-line rounded-2xl border border-line bg-surface">
-            {group.items.map((item) => (
-              <PlannedMealRow key={item.id} item={item} entry={entries.find((e) => e.meal_plan_item_id === item.id) ?? null} {...actions} />
-            ))}
-          </ul>
+          {group.common.length > 0 && (
+            <ul className={`divide-y divide-line rounded-2xl border border-line bg-surface ${group.variants.length > 0 ? 'mb-3' : ''}`}>
+              {group.common.map((item) => (
+                <PlannedMealRow key={item.id} item={item} entry={entries.find((e) => e.meal_plan_item_id === item.id) ?? null} {...actions} />
+              ))}
+            </ul>
+          )}
+          {group.variants.length > 0 && (
+            <VariantPicker
+              slot={group.slot}
+              variants={group.variants}
+              entries={entries}
+              targetKcal={targetKcal}
+              storedChoice={choices[group.slot] ?? null}
+              onChoose={(name) => onChoose(group.slot, name)}
+              {...actions}
+            />
+          )}
         </section>
       ))}
     </div>
   )
 }
 
-type RowProps = Omit<Props, 'items' | 'entries'> & { readonly item: PlannedMeal; readonly entry: FoodEntry | null }
+interface RowProps extends Actions {
+  readonly item: PlannedMeal
+  readonly entry: FoodEntry | null
+}
 
 function PlannedMealRow({ item, entry, onPlanned, onReplace, onEdit, onUndo }: RowProps) {
   const [mode, setMode] = useState<'view' | 'replace' | 'edit'>('view')
@@ -100,7 +112,7 @@ function PlannedMealRow({ item, entry, onPlanned, onReplace, onEdit, onUndo }: R
         <div className="mt-3 flex flex-wrap gap-2">
           {!entry && (
             <>
-              <Button loading={busy} onClick={() => void run(() => onPlanned(item))}>
+              <Button loading={busy} onClick={() => void run(() => onPlanned([item]))}>
                 Wie geplant
               </Button>
               <Button variant="secondary" disabled={busy} onClick={() => setMode('replace')}>
@@ -114,7 +126,7 @@ function PlannedMealRow({ item, entry, onPlanned, onReplace, onEdit, onUndo }: R
             </Button>
           )}
           {entry && (
-            <Button variant="ghost" loading={busy} onClick={() => void run(() => onUndo(entry))}>
+            <Button variant="ghost" loading={busy} onClick={() => void run(() => onUndo([entry]))}>
               Rückgängig
             </Button>
           )}

@@ -5,8 +5,9 @@ import { Card } from '../../../components/Card'
 import { Field } from '../../../components/Field'
 import { toMessage } from '../../../lib/supabase'
 import { saveMealPlan, type ActiveMealPlan } from '../api'
-import { draftFromItems, draftToItems, newDraftMeal, removeDraftMeal, updateDraftMeal, type DraftMeal } from './draft'
+import { draftFromItems, draftToItems, newDraftMeal, nextVariantName, removeDraftMeal, renameDraftVariant, updateDraftMeal, type DraftMeal } from './draft'
 import { DAY_KEYS, DAY_LABELS, isDayKey, isMealSlot, MEAL_LIMITS, MEAL_SLOTS, SLOT_LABELS, type DayKey, type MealSlot } from './model'
+import { splitVariants } from './variants'
 
 interface Props {
   /** null = neuer Plan von Grund auf. */
@@ -55,7 +56,10 @@ export function MealPlanEditor({ current, onSaved, onCancel }: Props) {
   const [busy, setBusy] = useState(false)
 
   function add() {
-    const meal = newDraftMeal(newDay, newSlot)
+    addMeal(newDraftMeal(newDay, newSlot))
+  }
+
+  function addMeal(meal: DraftMeal) {
     setDraft((d) => [...d, meal])
     setOpenUid(meal.uid)
   }
@@ -88,25 +92,45 @@ export function MealPlanEditor({ current, onSaved, onCancel }: Props) {
       {days.map((day) => (
         <Card key={day}>
           <h3 className="font-display text-xl font-bold uppercase">{DAY_LABELS[day]}</h3>
-          {MEAL_SLOTS.filter((slot) => draft.some((m) => m.dayKey === day && m.mealSlot === slot)).map((slot) => (
-            <div key={slot} className="mt-3">
-              <p className="text-xs uppercase tracking-wider text-muted">{SLOT_LABELS[slot]}</p>
-              <ul className="mt-1 divide-y divide-line">
-                {draft
-                  .filter((m) => m.dayKey === day && m.mealSlot === slot)
-                  .map((meal) => (
-                    <DraftRow
-                      key={meal.uid}
-                      meal={meal}
-                      open={openUid === meal.uid}
-                      onToggle={() => setOpenUid((uid) => (uid === meal.uid ? null : meal.uid))}
-                      onChange={(patch) => setDraft((d) => updateDraftMeal(d, meal.uid, patch))}
-                      onRemove={() => setDraft((d) => removeDraftMeal(d, meal.uid))}
+          {MEAL_SLOTS.filter((slot) => draft.some((m) => m.dayKey === day && m.mealSlot === slot)).map((slot) => {
+            const { common, variants } = splitVariants(
+              draft.filter((m) => m.dayKey === day && m.mealSlot === slot),
+              (m) => m.variant,
+            )
+            const row = (meal: DraftMeal) => (
+              <DraftRow
+                key={meal.uid}
+                meal={meal}
+                open={openUid === meal.uid}
+                onToggle={() => setOpenUid((uid) => (uid === meal.uid ? null : meal.uid))}
+                onChange={(patch) => setDraft((d) => updateDraftMeal(d, meal.uid, patch))}
+                onRemove={() => setDraft((d) => removeDraftMeal(d, meal.uid))}
+              />
+            )
+            return (
+              <div key={slot} className="mt-3">
+                <p className="text-xs uppercase tracking-wider text-muted">{SLOT_LABELS[slot]}</p>
+                {common.length > 0 && <ul className="mt-1 divide-y divide-line">{common.map(row)}</ul>}
+                {variants.map((variant) => (
+                  <div key={variant.name} className="mt-2 border-l-2 border-accent/60 pl-3">
+                    <VariantHeader
+                      name={variant.name}
+                      onRename={(to) => setDraft((d) => renameDraftVariant(d, day, slot, variant.name, to))}
+                      onAddItem={() => addMeal(newDraftMeal(day, slot, variant.name))}
                     />
-                  ))}
-              </ul>
-            </div>
-          ))}
+                    <ul className="divide-y divide-line">{variant.items.map(row)}</ul>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => addMeal(newDraftMeal(day, slot, nextVariantName(draft, day, slot)))}
+                  className="mt-1 min-h-11 rounded-lg px-2 text-sm font-semibold text-accent hover:bg-surface-2"
+                >
+                  Neue Variante
+                </button>
+              </div>
+            )
+          })}
         </Card>
       ))}
 
@@ -183,8 +207,56 @@ function DraftRow({ meal, open, onToggle, onChange, onRemove }: RowProps) {
             <SelectField label="Mahlzeit" value={meal.mealSlot} options={MEAL_SLOTS} labels={SLOT_LABELS} onChange={(v) => isMealSlot(v) && onChange({ mealSlot: v })} />
           </div>
           <Field label="Hinweis" value={meal.notes} maxLength={MEAL_LIMITS.notesMax} onChange={(e) => onChange({ notes: e.target.value })} />
+          <Field
+            label="Variante (Gericht)"
+            placeholder="leer = gilt immer"
+            hint="Einträge mit gleicher Variante bilden ein Gericht, verschiedene Varianten einer Mahlzeit sind Alternativen."
+            value={meal.variant}
+            maxLength={MEAL_LIMITS.variantMax}
+            onChange={(e) => onChange({ variant: e.target.value })}
+          />
         </div>
       )}
     </li>
+  )
+}
+
+function VariantHeader({ name, onRename, onAddItem }: { readonly name: string; readonly onRename: (to: string) => void; readonly onAddItem: () => void }) {
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState(name)
+  if (editing) {
+    return (
+      <div className="flex items-end gap-2 py-1">
+        <Field label="Name der Variante" className="flex-1" value={value} maxLength={MEAL_LIMITS.variantMax} onChange={(e) => setValue(e.target.value)} />
+        <Button
+          variant="secondary"
+          disabled={!value.trim()}
+          onClick={() => {
+            onRename(value.trim())
+            setEditing(false)
+          }}
+        >
+          OK
+        </Button>
+      </div>
+    )
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-x-1">
+      <p className="mr-auto font-semibold">{name}</p>
+      <button
+        type="button"
+        onClick={() => {
+          setValue(name)
+          setEditing(true)
+        }}
+        className="min-h-11 rounded-lg px-2 text-sm text-muted hover:bg-surface-2 hover:text-ink"
+      >
+        Umbenennen
+      </button>
+      <button type="button" onClick={onAddItem} className="min-h-11 rounded-lg px-2 text-sm font-semibold text-accent hover:bg-surface-2">
+        Zutat hinzufügen
+      </button>
+    </div>
   )
 }

@@ -41,7 +41,8 @@ export const MEAL_LIMITS = {
   notesMax: 300,
   kcalMax: 5000,
   macroMax: 1000,
-  maxItems: 300,
+  variantMax: 60,
+  maxItems: 600,
 } as const
 
 export interface MealItem {
@@ -54,6 +55,8 @@ export interface MealItem {
   readonly carbsG: number | null
   readonly fatG: number | null
   readonly notes: string | null
+  /** Gerichtname: gleiche Variante in Tag und Mahlzeit bildet ein Gericht, null = gilt immer. */
+  readonly variant: string | null
 }
 
 /** Form eines Eintrags in p_items für create_meal_plan. */
@@ -68,6 +71,7 @@ export interface CreateMealItemArg {
   readonly carbs_g: number | null
   readonly fat_g: number | null
   readonly notes: string | null
+  readonly variant: string | null
 }
 
 const inRange = (n: number | null, max: number): boolean => n === null || (Number.isFinite(n) && n >= 0 && n <= max)
@@ -83,6 +87,7 @@ export function validateMealItems(items: readonly MealItem[]): string[] {
     if (item.name.length > MEAL_LIMITS.nameMax) errors.push(`${at}: Name ist länger als ${MEAL_LIMITS.nameMax} Zeichen.`)
     if ((item.amount?.length ?? 0) > MEAL_LIMITS.amountMax) errors.push(`${at}: Menge ist länger als ${MEAL_LIMITS.amountMax} Zeichen.`)
     if ((item.notes?.length ?? 0) > MEAL_LIMITS.notesMax) errors.push(`${at}: Hinweis ist länger als ${MEAL_LIMITS.notesMax} Zeichen.`)
+    if ((item.variant?.trim().length ?? 0) > MEAL_LIMITS.variantMax) errors.push(`${at}: Variante ist länger als ${MEAL_LIMITS.variantMax} Zeichen.`)
     if (!inRange(item.kcal, MEAL_LIMITS.kcalMax)) errors.push(`${at}: Kalorien müssen zwischen 0 und ${MEAL_LIMITS.kcalMax} liegen.`)
     if (!inRange(item.proteinG, MEAL_LIMITS.macroMax) || !inRange(item.carbsG, MEAL_LIMITS.macroMax) || !inRange(item.fatG, MEAL_LIMITS.macroMax)) {
       errors.push(`${at}: Makronährstoffe müssen zwischen 0 und ${MEAL_LIMITS.macroMax} g liegen.`)
@@ -123,6 +128,7 @@ export function toCreateMealItems(items: readonly MealItem[]): CreateMealItemArg
       carbs_g: round1(item.carbsG),
       fat_g: round1(item.fatG),
       notes: emptyToNull(item.notes),
+      variant: emptyToNull(item.variant),
     }
   })
 }

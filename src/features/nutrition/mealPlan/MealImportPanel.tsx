@@ -7,9 +7,10 @@ import { InlineError } from '../../../components/States'
 import { toMessage } from '../../../lib/supabase'
 import { ACCEPTED_FILES, planNameFromFile, readTable } from '../../plan/import/readFile'
 import { saveMealPlan } from '../api'
-import { DAY_LABELS, groupBySlot, MEAL_LIMITS, SLOT_LABELS, sortMealItems, DAY_KEYS } from './model'
+import { DAY_KEYS, DAY_LABELS, MEAL_LIMITS, SLOT_LABELS, sortMealItems } from './model'
 import { importErrors, parseMealTable, type ImportedMealItem, type MealImportResult } from './parseMealTable'
 import { downloadMealTemplate } from './template'
+import { groupSlotVariants, sumItems } from './variants'
 
 interface Props {
   readonly hasPlan: boolean
@@ -71,8 +72,8 @@ export function MealImportPanel({ hasPlan, onImported, onCancel }: Props) {
     <Card>
       <p className="font-display text-2xl font-bold uppercase">Ernährungsplan importieren</p>
       <p className="mt-1 text-sm text-muted">
-        Eine Zeile pro Lebensmittel mit Kopfzeile, z. B. Tag, Mahlzeit, Lebensmittel, Menge, kcal, Eiweiß, Kohlenhydrate, Fett und Hinweis. Als Tag gehen
-        Montag bis Sonntag, Trainingstag, Ruhetag oder Täglich. Dateien: .xlsx oder .csv.
+        Eine Zeile pro Lebensmittel mit Kopfzeile, z. B. Tag, Mahlzeit, Variante (optional), Lebensmittel, Menge, kcal, Eiweiß, Kohlenhydrate, Fett und Hinweis. Als Tag gehen
+        Montag bis Sonntag, Trainingstag, Ruhetag oder Täglich. Zeilen mit gleicher Variante bilden ein Gericht, verschiedene Varianten einer Mahlzeit sind Alternativen. Dateien: .xlsx oder .csv.
       </p>
       <div className="mt-4 flex flex-col gap-3 sm:flex-row">
         <label
@@ -156,24 +157,39 @@ function PreviewList({ items }: { readonly items: readonly ImportedMealItem[] })
       {days.map((day) => (
         <article key={day} className="rounded-xl border border-line bg-bg/30 p-3">
           <h3 className="font-display text-xl font-bold uppercase">{DAY_LABELS[day]}</h3>
-          {groupBySlot(sorted.filter((i) => i.dayKey === day)).map((group) => (
+          {groupSlotVariants(sorted.filter((i) => i.dayKey === day)).map((group) => (
             <div key={group.slot} className="mt-2">
               <p className="text-xs uppercase tracking-wider text-muted">{SLOT_LABELS[group.slot]}</p>
-              <ul className="divide-y divide-line">
-                {group.items.map((item) => (
-                  <li key={item.row} className="flex items-start justify-between gap-3 py-1.5 text-sm">
-                    <span>
-                      {item.name}
-                      {item.amount && <span className="text-muted"> · {item.amount}</span>}
-                    </span>
-                    <span className="shrink-0 tabular-nums text-muted">{item.kcal === null ? '-' : `${item.kcal} kcal`}</span>
-                  </li>
-                ))}
-              </ul>
+              {group.common.length > 0 && <PreviewItems items={group.common} />}
+              {group.variants.map((variant) => (
+                <div key={variant.name} className="mt-1 border-l-2 border-accent/60 pl-3">
+                  <p className="flex justify-between gap-3 pt-1 text-sm font-semibold">
+                    <span>Variante: {variant.name}</span>
+                    <span className="shrink-0 tabular-nums text-muted">{sumItems(variant.items).kcal} kcal</span>
+                  </p>
+                  <PreviewItems items={variant.items} />
+                </div>
+              ))}
             </div>
           ))}
         </article>
       ))}
     </div>
+  )
+}
+
+function PreviewItems({ items }: { readonly items: readonly ImportedMealItem[] }) {
+  return (
+    <ul className="divide-y divide-line">
+      {items.map((item) => (
+        <li key={item.row} className="flex items-start justify-between gap-3 py-1.5 text-sm">
+          <span>
+            {item.name}
+            {item.amount && <span className="text-muted"> · {item.amount}</span>}
+          </span>
+          <span className="shrink-0 tabular-nums text-muted">{item.kcal === null ? '-' : `${item.kcal} kcal`}</span>
+        </li>
+      ))}
+    </ul>
   )
 }

@@ -12,6 +12,7 @@ const item = (patch: Partial<MealItem>): MealItem => ({
   carbsG: 65,
   fatG: 1,
   notes: null,
+  variant: null,
   ...patch,
 })
 
@@ -66,6 +67,11 @@ describe('toCreateMealItems', () => {
     expect(args[0]).toMatchObject({ amount: null, kcal: 300, protein_g: 6 })
     expect(args[1]?.notes).toBe('mager')
   })
+
+  it('passes the trimmed variant or null', () => {
+    const args = toCreateMealItems([item({ variant: ' Hähnchen mit Reis ' }), item({ variant: '  ' })])
+    expect(args.map((a) => a.variant)).toEqual(['Hähnchen mit Reis', null])
+  })
 })
 
 describe('validateMealItems', () => {
@@ -78,13 +84,16 @@ describe('validateMealItems', () => {
     expect(errors).toHaveLength(4)
     expect(errors[0]).toContain('Name fehlt')
   })
+  it('rejects variants longer than 60 characters', () => {
+    expect(validateMealItems([item({ variant: 'x'.repeat(61) })])[0]).toContain('Variante')
+  })
 })
 
 describe('weekAdherence', () => {
   const items = [
-    { id: 'a', dayKey: 'alle' as const, mealSlot: 'fruehstueck' as const },
-    { id: 't', dayKey: 'training' as const, mealSlot: 'vor_training' as const },
-    { id: 'r', dayKey: 'ruhe' as const, mealSlot: 'abend' as const },
+    { id: 'a', dayKey: 'alle' as const, mealSlot: 'fruehstueck' as const, variant: null },
+    { id: 't', dayKey: 'training' as const, mealSlot: 'vor_training' as const, variant: null },
+    { id: 'r', dayKey: 'ruhe' as const, mealSlot: 'abend' as const, variant: null },
   ]
   const days = daysOfWeekUntil(TUESDAY).map((date, i) => ({ date, isTrainingDay: i === 0 }))
 
@@ -100,6 +109,23 @@ describe('weekAdherence', () => {
       { eaten_on: '2026-10-27', meal_plan_item_id: 't', status: 'wie_geplant' },
       { eaten_on: '2026-10-27', meal_plan_item_id: null, status: 'frei' },
     ])
+    expect(result).toEqual({ done: 2, planned: 4 })
+  })
+
+  it('counts a meal with variants once, done when one variant is complete', () => {
+    const withVariants = [
+      { id: 'h1', dayKey: 'alle' as const, mealSlot: 'mittag' as const, variant: 'Hähnchen' },
+      { id: 'h2', dayKey: 'alle' as const, mealSlot: 'mittag' as const, variant: 'Hähnchen' },
+      { id: 'l1', dayKey: 'alle' as const, mealSlot: 'mittag' as const, variant: 'Lachs' },
+      { id: 's', dayKey: 'alle' as const, mealSlot: 'mittag' as const, variant: null },
+    ]
+    const result = weekAdherence(withVariants, days, [
+      { eaten_on: '2026-10-26', meal_plan_item_id: 'h1', status: 'wie_geplant' },
+      { eaten_on: '2026-10-26', meal_plan_item_id: 'h2', status: 'wie_geplant' },
+      { eaten_on: '2026-10-27', meal_plan_item_id: 'h1', status: 'wie_geplant' },
+      { eaten_on: '2026-10-27', meal_plan_item_id: 's', status: 'wie_geplant' },
+    ])
+    // Pro Tag: Beilage s und eine Mahlzeit mit Varianten = 2 fällig.
     expect(result).toEqual({ done: 2, planned: 4 })
   })
 })

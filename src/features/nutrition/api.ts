@@ -33,6 +33,8 @@ export interface NewFoodEntry extends FoodValues {
   readonly status: FoodStatus
   readonly mealSlot: MealSlot | null
   readonly mealPlanItemId: string | null
+  /** Menge in Gramm, wenn der Eintrag aus einem Lebensmittel berechnet wurde. */
+  readonly grams?: number | null
 }
 
 const UNIQUE_VIOLATION = '23505'
@@ -58,6 +60,7 @@ export async function addFoodEntry(entry: NewFoodEntry): Promise<FoodEntry> {
       meal_slot: entry.mealSlot,
       meal_plan_item_id: entry.mealPlanItemId,
       status: entry.status,
+      grams: entry.grams ?? null,
     })
     .select('*')
     .single()
@@ -92,6 +95,7 @@ function toPlannedMeal(row: Tables<'meal_plan_items'>): PlannedMeal[] {
       carbsG: row.carbs_g,
       fatG: row.fat_g,
       notes: row.notes,
+      variant: row.variant,
     },
   ]
 }

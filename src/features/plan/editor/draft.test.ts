@@ -24,6 +24,8 @@ const detail: PlanDetail = {
   days: [
     {
       id: 'd1',
+      weekday: null,
+      is_rest: false,
       plan_id: 'p',
       user_id: 'u',
       day_index: 0,

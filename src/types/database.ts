@@ -182,25 +182,31 @@ export type Database = {
           created_at: string
           day_index: number
           id: string
+          is_rest: boolean
           plan_id: string
           title: string | null
           user_id: string
+          weekday: number | null
         }
         Insert: {
           created_at?: string
           day_index: number
           id?: string
+          is_rest?: boolean
           plan_id: string
           title?: string | null
           user_id?: string
+          weekday?: number | null
         }
         Update: {
           created_at?: string
           day_index?: number
           id?: string
+          is_rest?: boolean
           plan_id?: string
           title?: string | null
           user_id?: string
+          weekday?: number | null
         }
         Relationships: [
           {

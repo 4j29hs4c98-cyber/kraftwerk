@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { PlanDetail } from '../api'
-import { addExercise, draftFromDetail, draftToPlan, moveExercise, newExercise, removeExercise, renameDay, updateExercise } from './draft'
+import { addExercise, addRestDay, draftFromDetail, draftToPlan, moveExercise, newExercise, removeDay, removeExercise, renameDay, setDayRest, setDayWeekday, updateExercise } from './draft'
 
 const exRow = (key: string, position: number, extra: Partial<PlanDetail['days'][number]['exercises'][number]> = {}) => ({
   id: key,
@@ -79,5 +79,36 @@ describe('plan draft', () => {
       'Tag 1, Übung 1: "Wdh. von" darf nicht größer sein als "Wdh. bis".',
       'Tag 1, Übung 1: Das Startgewicht muss zwischen 0 und 1000 kg liegen.',
     ])
+  })
+})
+
+describe('weekdays and rest days in the draft', () => {
+  const base = draftFromDetail({ ...detail, days: detail.days.map((d) => ({ ...d, weekday: 0 })) })
+
+  it('adds a rest day on the first free weekday and saves it without exercises', () => {
+    const next = addRestDay(base)
+    expect(next.days[1]).toMatchObject({ title: 'Ruhetag', weekday: 1, isRest: true })
+    const result = draftToPlan(next)
+    expect(result.ok && result.plan.days.map((d) => [d.weekday, d.isRest, d.exercises.length])).toEqual([
+      [0, false, 2],
+      [1, true, 0],
+    ])
+  })
+
+  it('marking a day as rest keeps the exercises in the draft but saves none; unmarking needs a new name', () => {
+    const second = addRestDay(base)
+    const restUid = second.days[0]!.uid
+    const marked = setDayRest(second, restUid, true)
+    expect(marked.days[0]).toMatchObject({ isRest: true, title: 'Ruhetag' })
+    expect(marked.days[0]!.exercises).toHaveLength(2)
+    expect(draftToPlan(marked)).toMatchObject({ ok: false })
+    const back = setDayRest(marked, restUid, false)
+    expect(back.days[0]).toMatchObject({ isRest: false, title: '' })
+  })
+
+  it('changes and removes days', () => {
+    const next = removeDay(setDayWeekday(addRestDay(base), base.days[0]!.uid, 3), base.days[0]!.uid)
+    expect(next.days).toHaveLength(1)
+    expect(draftToPlan(next)).toMatchObject({ ok: false })
   })
 })

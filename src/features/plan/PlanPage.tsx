@@ -6,12 +6,14 @@ import { ErrorState, InlineError, LoadingState } from '../../components/States'
 import { toMessage } from '../../lib/supabase'
 import { DAYS_HINT } from '../profile/pickers'
 import { useProfile } from '../profile/ProfileProvider'
-import { DayCard } from './DayCard'
+import type { PlanDay, PlanDetail } from './api'
+import { DayCard, RestDayCard } from './DayCard'
 import { PlanEditor } from './editor/PlanEditor'
 import { ImportPanel } from './import/ImportPanel'
 import { NoPlan } from './NoPlan'
 import { regeneratePlan } from './regenerate'
 import { usePlanOverview } from './usePlan'
+import { hasWeekdays, weekdayName, weekdayOf, weekSlots } from './weekdays'
 
 export function PlanPage() {
   const overview = usePlanOverview()
@@ -66,16 +68,18 @@ export function PlanPage() {
                 dienen der Erholung.
               </p>
             )}
-            <p className="mt-1 text-sm text-muted">
-              {profile.days_per_week} Einheiten pro Woche. {profile.days_per_week !== null ? DAYS_HINT[profile.days_per_week] : ''}. Der nächste Tag
-              richtet sich nach deinem letzten abgeschlossenen Training.
-            </p>
+            {hasWeekdays(overview.data.detail.days) ? (
+              <p className="mt-1 text-sm text-muted">
+                {overview.data.detail.days.filter((d) => !d.is_rest).length} Trainingstage pro Woche, fest nach Wochentagen. Heute ist hervorgehoben.
+              </p>
+            ) : (
+              <p className="mt-1 text-sm text-muted">
+                {profile.days_per_week} Einheiten pro Woche. {profile.days_per_week !== null ? DAYS_HINT[profile.days_per_week] : ''}. Der nächste Tag
+                richtet sich nach deinem letzten abgeschlossenen Training.
+              </p>
+            )}
           </Card>
-          <div className="grid gap-4 lg:grid-cols-2">
-            {overview.data.detail.days.map((day, i) => (
-              <DayCard key={day.id} day={day} position={i + 1} isNext={day.id === overview.data.nextDay?.id} />
-            ))}
-          </div>
+          <PlanDays detail={overview.data.detail} nextDay={overview.data.nextDay} />
           <Card>
             <p className="font-semibold">Plan anpassen</p>
             <p className="mt-1 text-sm text-muted">
@@ -94,5 +98,34 @@ export function PlanPage() {
         </div>
       )}
     </>
+  )
+}
+
+/** Pläne mit Wochentagen zeigen die Woche Montag bis Sonntag, sonst die Tage in Planreihenfolge. */
+function PlanDays({ detail, nextDay }: { readonly detail: PlanDetail; readonly nextDay: PlanDay | null }) {
+  const todayWeekday = weekdayOf(new Date())
+  if (hasWeekdays(detail.days)) {
+    return (
+      <div className="grid gap-4 lg:grid-cols-2">
+        {weekSlots(detail.days).map(({ weekday, day }) =>
+          day && !day.is_rest ? (
+            <DayCard key={weekday} day={day} label={weekdayName(weekday)} isNext={weekday === todayWeekday} badge="Heute" />
+          ) : (
+            <RestDayCard key={weekday} label={weekdayName(weekday)} isToday={weekday === todayWeekday} />
+          ),
+        )}
+      </div>
+    )
+  }
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      {detail.days.map((day, i) =>
+        day.is_rest ? (
+          <RestDayCard key={day.id} label={`Tag ${i + 1}`} isToday={false} />
+        ) : (
+          <DayCard key={day.id} day={day} label={`Tag ${i + 1}`} isNext={day.id === nextDay?.id} />
+        ),
+      )}
+    </div>
   )
 }

@@ -83,7 +83,8 @@ Abhängigkeit zu React oder Supabase und ist mit Vitest abgedeckt.
   Das Ziel fällt nie unter den Grundumsatz und nie unter 1200 kcal (w) bzw. 1500 kcal (m, d).
 - **Makros:** Fett deckt 25 % der Zielkalorien (9 kcal/g), Kohlenhydrate den Rest nach Eiweiß (4 kcal/g) und Fett, nie negativ.
 - **Ernährungsplan heute:** Es gelten die Einträge des Wochentags, "Täglich" und je nach Tag "Trainingstag" oder "Ruhetag". Trainingstag ist, wenn an dem Tag
-  ein Workout begonnen wurde (abgeschlossen oder offen); der Schalter auf der Ernährungsseite überstimmt das für den Tag. "Plan eingehalten" zählt von Montag
+  ein Workout begonnen wurde (abgeschlossen oder offen) oder der Trainingsplan mit Wochentagen den Tag als Trainingstag führt (Ruhetag oder Wochentag
+  ohne Eintrag: Ruhetag). Der Schalter auf der Ernährungsseite überstimmt das für den Tag und wird pro Datum im Browser gemerkt (60 Tage). "Plan eingehalten" zählt von Montag
   bis heute die Mahlzeiten mit "Wie geplant"; ersetzte Mahlzeiten zählen nicht.
 - **Pausen-Anzeige:** Kalendertage seit dem letzten abgeschlossenen Training (lokal). 0 bis 7 grün, 8 bis 14 gelb, 15 bis 21 orange, ab 22 rot.
 - **Kurven:** Kraft aus der RPC `exercise_progress` (höchstes Gewicht und geschätztes 1RM nach Epley je Trainingstag). Körpergewicht und Körperfett
@@ -91,6 +92,11 @@ Abhängigkeit zu React oder Supabase und ist mit Vitest abgedeckt.
 - **Verlauf:** Abgeschlossene Trainings lassen sich unter Fortschritt korrigieren (Sätze ändern, löschen, nachtragen, Training löschen). Vorschläge
   fürs nächste Training lesen die Sätze bei jedem Start frisch aus der Datenbank, Korrekturen wirken also sofort.
 - **Pläne speichern:** immer über die RPC `create_plan` (eine Transaktion: alter Plan aus, neuer an). Bearbeiten und Import erzeugen einen neuen aktiven Plan.
+- **Wochentage und Ruhetage:** Plantage können einen Wochentag haben (`plan_days.weekday`, 0 = Montag bis 6 = Sonntag; alle Tage oder keiner, jeder
+  höchstens einmal) und Ruhetage sein (`is_rest`, ohne Übungen). Mit Wochentagen gilt heute der Tag des heutigen Wochentags (lokal); Ruhetag oder
+  Wochentag ohne Eintrag zeigt "Heute ist Ruhetag" mit dem nächsten Trainingstag, trainieren lässt sich trotzdem jeder Tag. Ohne Wochentage bleibt
+  die Rotation nach dem letzten abgeschlossenen Training, Ruhetage werden dabei übersprungen. Generator und Fragebogen erzeugen Pläne ohne Wochentage.
+  Logik in `plan/weekdays.ts` (getestet).
 
 ## Plan-Import (Excel oder CSV)
 
@@ -98,7 +104,10 @@ Auf der Plan-Seite unter "Plan aus Excel importieren" (.xlsx oder .csv, höchste
 
 - **Eine Zeile pro Übung**, darüber eine Kopfzeile. Spaltennamen werden tolerant erkannt (Groß/Klein, Umlaute, Synonyme):
   `Tag`/`Wochentag`, `Fokus`/`Titel`, `Übung` (Pflicht), `Sätze`, `Wiederholungen`/`Wdh` (Pflicht), `Gewicht`, `Hinweise`/`Notiz`, optional `Pause (s)`.
-- **Tage** entstehen in der Reihenfolge ihres Auftretens; eine leere Tag-Zelle gehört zum Tag darüber. Zeilen mit Fokus "Pause" oder Übung "-" werden übersprungen.
+- **Tage** entstehen in der Reihenfolge ihres Auftretens; eine leere Tag-Zelle gehört zum Tag darüber.
+- **Wochentage:** Enthält die Tag-Spalte durchgehend Wochentage (Montag bis Sonntag, auch Mo, Di ...), bekommt jeder Tag seinen Wochentag, die Tage
+  stehen von Montag bis Sonntag, und Zeilen mit Fokus "Pause"/"Ruhetag" oder Übung "-" werden Ruhetage (Titel "Ruhetag"). Sonst (z. B. "Tag 1")
+  gibt es keine Wochentage und solche Zeilen werden übersprungen.
 - **Tagestitel** = Fokus, übersetzt (Upper -> Oberkörper, Lower -> Unterkörper, Legs -> Beine, Push/Pull bleiben). Gleicher Fokus mehrfach: A, B, C.
 - **Wiederholungen:** `8-10`, `12`, `12 (pro Bein)` (Zusatz wird Hinweis), `Max`/`Versagen` -> 6-15 mit Hinweis, `Max / 5-8` -> 5-8.
 - **Gewicht:** erste Zahl wird Startgewicht (`70-75 kg` -> 70), der Originaltext landet zusätzlich im Hinweis.

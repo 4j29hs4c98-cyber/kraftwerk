@@ -28,15 +28,24 @@ export function ExerciseList({ day }: { readonly day: PlanDay }) {
   )
 }
 
-export function DayCard({ day, isNext, position }: { readonly day: PlanDay; readonly isNext: boolean; readonly position: number }) {
+interface DayCardProps {
+  readonly day: PlanDay
+  /** "Montag" bei Plänen mit Wochentagen, sonst "Tag 1". */
+  readonly label: string
+  readonly isNext: boolean
+  /** Bei Plänen mit Wochentagen heißt der hervorgehobene Tag "Heute". */
+  readonly badge?: string
+}
+
+export function DayCard({ day, label, isNext, badge = 'Als Nächstes' }: DayCardProps) {
   return (
     <article className={`rounded-2xl border bg-surface p-4 ${isNext ? 'border-accent' : 'border-line'}`}>
       <header className="mb-1 flex items-center justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-wider text-muted">Tag {position}</p>
-          <h3 className="font-display text-2xl font-bold uppercase leading-tight">{day.title ?? `Tag ${position}`}</h3>
+          <p className="text-xs uppercase tracking-wider text-muted">{label}</p>
+          <h3 className="font-display text-2xl font-bold uppercase leading-tight">{day.title ?? label}</h3>
         </div>
-        {isNext && <span className="rounded-full bg-accent px-3 py-1 text-xs font-bold text-accent-ink">Als Nächstes</span>}
+        {isNext && <span className="rounded-full bg-accent px-3 py-1 text-xs font-bold text-accent-ink">{badge}</span>}
       </header>
       <ExerciseList day={day} />
       <Link
@@ -45,6 +54,25 @@ export function DayCard({ day, isNext, position }: { readonly day: PlanDay; read
       >
         {isNext ? 'Training starten' : 'Diesen Tag trainieren'}
       </Link>
+    </article>
+  )
+}
+
+/** Ruhige Karte für Ruhetage und Wochentage ohne Eintrag. */
+export function RestDayCard({ label, isToday }: { readonly label: string; readonly isToday: boolean }) {
+  return (
+    <article
+      aria-label={`${label}: Ruhetag`}
+      className={`rounded-2xl border border-dashed p-4 ${isToday ? 'border-muted bg-surface' : 'border-line bg-surface/40'}`}
+    >
+      <header className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-xs uppercase tracking-wider text-muted">{label}</p>
+          <h3 className="font-display text-2xl font-bold uppercase leading-tight text-muted">Ruhetag</h3>
+        </div>
+        {isToday && <span className="rounded-full border border-line bg-surface-2 px-3 py-1 text-xs font-bold">Heute</span>}
+      </header>
+      <p className="mt-1 text-sm text-muted">Kein Training geplant. Regeneration gehört zum Plan: Muskeln wachsen in der Pause.</p>
     </article>
   )
 }

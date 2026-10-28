@@ -7,15 +7,20 @@ import { toMessage } from '../../../lib/supabase'
 import { savePlan, type PlanDetail } from '../api'
 import { isCustomKey, repsUnitLabel } from '../exercises'
 import { PLAN_LIMITS } from '../planModel'
+import { WEEKDAY_NAMES } from '../weekdays'
 import {
   addExercise,
+  addRestDay,
   draftExerciseName,
   draftFromDetail,
   draftToPlan,
   moveExercise,
   newExercise,
+  removeDay,
   removeExercise,
   renameDay,
+  setDayRest,
+  setDayWeekday,
   updateExercise,
   type DraftDay,
   type DraftExercise,
@@ -55,12 +60,23 @@ export function PlanEditor({ detail, onSaved, onCancel }: Props) {
       <Card>
         <p className="font-display text-2xl font-bold uppercase">Plan bearbeiten</p>
         <p className="mt-1 text-sm text-muted">
-          Beim Speichern entsteht ein neuer aktiver Plan mit gleichem Namen. Deine bisherigen Trainings bleiben erhalten.
+          Beim Speichern entsteht ein neuer aktiver Plan mit gleichem Namen. Deine bisherigen Trainings bleiben erhalten. Wochentage vergibst du
+          für alle Tage oder für keinen; mit Wochentagen gilt in der App immer der Tag des heutigen Wochentags.
         </p>
       </Card>
       {draft.days.map((day, i) => (
-        <DayEditor key={day.uid} day={day} position={i + 1} onChange={setDraft} />
+        <DayEditor
+          key={day.uid}
+          day={day}
+          position={i + 1}
+          takenWeekdays={new Set(draft.days.filter((d) => d.uid !== day.uid).map((d) => d.weekday))}
+          canRemove={draft.days.length > 1}
+          onChange={setDraft}
+        />
       ))}
+      <Button variant="secondary" disabled={draft.days.length >= PLAN_LIMITS.maxDays} onClick={() => setDraft((d) => addRestDay(d))}>
+        {draft.days.length >= PLAN_LIMITS.maxDays ? `Höchstens ${PLAN_LIMITS.maxDays} Tage pro Plan` : 'Ruhetag hinzufügen'}
+      </Button>
       <Card>
         {errors.length > 0 && (
           <ul role="alert" className="mb-3 list-disc rounded-xl border border-danger/40 bg-danger/10 py-2 pr-3 pl-7 text-sm text-danger">
@@ -78,7 +94,18 @@ export function PlanEditor({ detail, onSaved, onCancel }: Props) {
 
 type Update = (fn: (draft: PlanDraft) => PlanDraft) => void
 
-function DayEditor({ day, position, onChange }: { readonly day: DraftDay; readonly position: number; readonly onChange: Update }) {
+interface DayEditorProps {
+  readonly day: DraftDay
+  readonly position: number
+  /** Wochentage, die andere Tage schon belegen. */
+  readonly takenWeekdays: ReadonlySet<number | null>
+  readonly canRemove: boolean
+  readonly onChange: Update
+}
+
+const selectClass = 'min-h-11 w-full rounded-lg border border-line bg-surface-2 px-2 text-sm focus:border-accent focus:outline-none'
+
+function DayEditor({ day, position, takenWeekdays, canRemove, onChange }: DayEditorProps) {
   const [picking, setPicking] = useState(false)
   const full = day.exercises.length >= PLAN_LIMITS.maxExercisesPerDay
 
@@ -88,32 +115,63 @@ function DayEditor({ day, position, onChange }: { readonly day: DraftDay; readon
   }
 
   return (
-    <article className="rounded-2xl border border-line bg-surface p-4">
+    <article className={`rounded-2xl border p-4 ${day.isRest ? 'border-dashed border-line bg-surface/40' : 'border-line bg-surface'}`}>
       <Field label={`Tag ${position}`} value={day.title} maxLength={PLAN_LIMITS.dayTitleMax} onChange={(e) => onChange((d) => renameDay(d, day.uid, e.target.value))} />
-      <ol className="mt-3 flex flex-col gap-3">
-        {day.exercises.map((ex, i) => (
-          <ExerciseEditor
-            key={ex.uid}
-            exercise={ex}
-            isFirst={i === 0}
-            isLast={i === day.exercises.length - 1}
-            onPatch={(patch) => onChange((d) => updateExercise(d, day.uid, ex.uid, patch))}
-            onMove={(delta) => onChange((d) => moveExercise(d, day.uid, ex.uid, delta))}
-            onRemove={() => onChange((d) => removeExercise(d, day.uid, ex.uid))}
-          />
-        ))}
-      </ol>
-      {picking ? (
-        <ExercisePicker
-          taken={new Set(day.exercises.map((e) => e.exerciseKey))}
-          onPickLibrary={(key) => add(newExercise({ key }))}
-          onAddCustom={(name) => add(newExercise({ customName: name }))}
-          onClose={() => setPicking(false)}
-        />
-      ) : (
-        <Button variant="secondary" block className="mt-3" disabled={full} onClick={() => setPicking(true)}>
-          {full ? `Höchstens ${PLAN_LIMITS.maxExercisesPerDay} Übungen pro Tag` : 'Übung hinzufügen'}
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_auto] sm:items-end">
+        <label className="flex flex-col gap-1 text-xs text-muted">
+          Wochentag
+          <select
+            className={selectClass}
+            value={day.weekday ?? ''}
+            onChange={(e) => onChange((d) => setDayWeekday(d, day.uid, e.target.value === '' ? null : Number(e.target.value)))}
+          >
+            <option value="">Ohne festen Wochentag</option>
+            {WEEKDAY_NAMES.map((name, weekday) => (
+              <option key={name} value={weekday} disabled={takenWeekdays.has(weekday)}>
+                {name}
+                {takenWeekdays.has(weekday) ? ' (vergeben)' : ''}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex min-h-11 items-center gap-2 rounded-lg border border-line bg-surface-2 px-3 text-sm font-semibold">
+          <input type="checkbox" className="size-5 accent-accent" checked={day.isRest} onChange={(e) => onChange((d) => setDayRest(d, day.uid, e.target.checked))} />
+          Ruhetag
+        </label>
+        <Button variant="ghost" disabled={!canRemove} onClick={() => onChange((d) => removeDay(d, day.uid))}>
+          Tag entfernen
         </Button>
+      </div>
+      {day.isRest ? (
+        <p className="mt-3 text-sm text-muted">Ruhetag ohne Übungen. Regeneration gehört zum Plan.</p>
+      ) : (
+        <>
+          <ol className="mt-3 flex flex-col gap-3">
+            {day.exercises.map((ex, i) => (
+              <ExerciseEditor
+                key={ex.uid}
+                exercise={ex}
+                isFirst={i === 0}
+                isLast={i === day.exercises.length - 1}
+                onPatch={(patch) => onChange((d) => updateExercise(d, day.uid, ex.uid, patch))}
+                onMove={(delta) => onChange((d) => moveExercise(d, day.uid, ex.uid, delta))}
+                onRemove={() => onChange((d) => removeExercise(d, day.uid, ex.uid))}
+              />
+            ))}
+          </ol>
+          {picking ? (
+            <ExercisePicker
+              taken={new Set(day.exercises.map((e) => e.exerciseKey))}
+              onPickLibrary={(key) => add(newExercise({ key }))}
+              onAddCustom={(name) => add(newExercise({ customName: name }))}
+              onClose={() => setPicking(false)}
+            />
+          ) : (
+            <Button variant="secondary" block className="mt-3" disabled={full} onClick={() => setPicking(true)}>
+              {full ? `Höchstens ${PLAN_LIMITS.maxExercisesPerDay} Übungen pro Tag` : 'Übung hinzufügen'}
+            </Button>
+          )}
+        </>
       )}
     </article>
   )

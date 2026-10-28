@@ -3,6 +3,7 @@ import { supabase, unwrap, unwrapMaybe, UserFacingError } from '../../lib/supaba
 import type { Tables } from '../../types/database'
 import { nextDayIndex } from './generator'
 import { toCreatePlanArgs, validatePlan, type NewPlan } from './planModel'
+import { hasWeekdays, planForWeekday, weekdayOf, type TodayPlan } from './weekdays'
 
 export type PlanRow = Tables<'plans'>
 export type PlanExerciseRow = Tables<'plan_exercises'>
@@ -40,20 +41,34 @@ export async function fetchActivePlan(): Promise<PlanDetail | null> {
   }
 }
 
-/** Ermittelt den nächsten fälligen Tag anhand des letzten abgeschlossenen Workouts dieses Plans. */
+/**
+ * Nächster fälliger Tag in einem Plan ohne Wochentage, rotierend nach dem letzten
+ * abgeschlossenen Workout dieses Plans. Ruhetage werden übersprungen.
+ */
 export async function fetchNextDay(detail: PlanDetail): Promise<PlanDay | null> {
-  if (detail.days.length === 0) return null
-  const dayIds = detail.days.map((d) => d.id)
+  const training = detail.days.filter((d) => !d.is_rest)
+  if (training.length === 0) return null
   const last = unwrapMaybe(
     await supabase
       .from('workouts')
       .select('plan_day_id')
-      .in('plan_day_id', dayIds)
+      .in('plan_day_id', training.map((d) => d.id))
       .not('finished_at', 'is', null)
       .order('finished_at', { ascending: false })
       .limit(1)
       .maybeSingle(),
   )
-  const lastIndex = detail.days.findIndex((d) => d.id === last?.plan_day_id)
-  return detail.days[nextDayIndex(detail.days.length, lastIndex >= 0 ? lastIndex : null)] ?? null
+  const lastIndex = training.findIndex((d) => d.id === last?.plan_day_id)
+  return training[nextDayIndex(training.length, lastIndex >= 0 ? lastIndex : null)] ?? null
+}
+
+/**
+ * Was heute ansteht. Plan mit Wochentagen: der Tag des heutigen Wochentags (lokal),
+ * Ruhetag oder fehlender Eintrag als Ruhetag mit dem nächsten Trainingstag.
+ * Plan ohne Wochentage: die bisherige Rotation.
+ */
+export async function fetchTodayPlan(detail: PlanDetail, today: Date): Promise<TodayPlan<PlanDay> | null> {
+  if (hasWeekdays(detail.days)) return planForWeekday(detail.days, weekdayOf(today))
+  const next = await fetchNextDay(detail)
+  return next ? { kind: 'training', day: next } : null
 }

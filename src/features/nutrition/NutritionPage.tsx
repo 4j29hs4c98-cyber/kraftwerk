@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { fetchActivePlan } from '../plan/api'
 import { IconChevron } from '../../app/icons'
 import { Button } from '../../components/Button'
 import { Card, PageHeader, SectionTitle } from '../../components/Card'
@@ -31,6 +32,7 @@ import { MealImportPanel } from './mealPlan/MealImportPanel'
 import { MealPlanEditor } from './mealPlan/MealPlanEditor'
 import { itemsForDay } from './mealPlan/model'
 import { PlannedMeals } from './PlannedMeals'
+import { defaultTrainingDay, loadOverrides, saveOverrides, type TrainingOverrides } from './trainingDay'
 import { TrainingDayToggle } from './TrainingDayToggle'
 
 function useTarget(): ReturnType<typeof useAsync<NutritionTarget | null>> {
@@ -89,11 +91,14 @@ export function NutritionPage() {
   // Stand die Ansicht auf "Heute" und der Tag wechselt, springt sie mit.
   const today = useToday((previous, next) => setDay((current) => (current === previous ? next : current)))
   const [mode, setMode] = useState<Mode>('view')
-  /** Manuell gesetzter Trainings- oder Ruhetag je Datum; sonst gilt, ob an dem Tag trainiert wurde. */
-  const [trainingOverride, setTrainingOverride] = useState<Readonly<Record<string, boolean>>>({})
+  /** Manuell gesetzter Trainings- oder Ruhetag je Datum (im Browser gemerkt); sonst gilt der Standard aus Training und Wochenplan. */
+  const [trainingOverride, setTrainingOverride] = useState<TrainingOverrides>(loadOverrides)
   const target = useTarget()
   const entries = useAsync(() => fetchFoodEntries(day), [day])
   const mealPlan = useAsync(fetchActiveMealPlan, [])
+  // Der Trainingsplan liefert nur den Standard für den Schalter; fehlt er, gilt das bisherige Verhalten.
+  const trainingPlan = useAsync(fetchActivePlan, [])
+  const planDays = trainingPlan.status === 'ready' ? (trainingPlan.data?.days ?? []) : []
   const dayTraining = useAsync(() => {
     const start = parseISODate(day)
     return fetchTrainingDays(start, addDays(start, 1))
@@ -107,8 +112,8 @@ export function NutritionPage() {
 
   const list: readonly FoodEntry[] = entries.status === 'ready' ? entries.data : []
   const plan = mealPlan.status === 'ready' ? mealPlan.data : null
-  const detected = dayTraining.status === 'ready' ? dayTraining.data.has(day) : false
-  const isTrainingDay = trainingOverride[day] ?? detected
+  const dayDefault = defaultTrainingDay(parseISODate(day), dayTraining.status === 'ready' && dayTraining.data.has(day), planDays)
+  const isTrainingDay = trainingOverride[day] ?? dayDefault.isTrainingDay
   const todaysItems: readonly PlannedMeal[] = plan ? itemsForDay(plan.items, parseISODate(day), isTrainingDay) : []
   const shownIds = new Set(todaysItems.map((i) => i.id))
   const otherEntries = list.filter((e) => e.meal_plan_item_id === null || !shownIds.has(e.meal_plan_item_id))
@@ -119,7 +124,7 @@ export function NutritionPage() {
           plan.items,
           daysOfWeekUntil(parseISODate(today)).map((date) => {
             const iso = toISODate(date)
-            return { date, isTrainingDay: trainingOverride[iso] ?? week.data.trainingDays.has(iso) }
+            return { date, isTrainingDay: trainingOverride[iso] ?? defaultTrainingDay(date, week.data.trainingDays.has(iso), planDays).isTrainingDay }
           }),
           week.data.planEntries,
         )
@@ -244,8 +249,12 @@ export function NutritionPage() {
         <>
           <TrainingDayToggle
             value={isTrainingDay}
-            detected={dayTraining.status === 'ready' ? detected : null}
-            onChange={(value) => setTrainingOverride((current) => ({ ...current, [day]: value }))}
+            hint={dayTraining.status === 'ready' ? dayDefault.reason : null}
+            onChange={(value) => {
+              const next = { ...trainingOverride, [day]: value }
+              setTrainingOverride(next)
+              saveOverrides(next, today)
+            }}
           />
           {todaysItems.length === 0 ? (
             <EmptyState title="Für diesen Tag ist nichts geplant">Dein Plan enthält keine Mahlzeiten für diesen Wochentag.</EmptyState>

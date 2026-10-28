@@ -20,7 +20,7 @@ interface Loaded {
 
 async function loadSession(dayId: string): Promise<Loaded | null> {
   const plan = await fetchActivePlan()
-  const day = plan?.days.find((d) => d.id === dayId)
+  const day = plan?.days.find((d) => d.id === dayId && !d.is_rest)
   if (!day) return null
   const [lastSets, open] = await Promise.all([fetchLastSets(day.exercises.map((e) => e.exercise_key)), findOpenWorkout(day.id)])
   return { day, entries: buildEntries(day.exercises, lastSets, open?.sets ?? []), openWorkout: open?.workout ?? null }

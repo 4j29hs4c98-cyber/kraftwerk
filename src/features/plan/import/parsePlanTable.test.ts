@@ -17,9 +17,14 @@ const EXAMPLES = [
 describe('parsePlanTable with the example rows', () => {
   const result = parsePlanTable([HEADER, ...EXAMPLES])
 
-  it('has no errors and skips the rest day', () => {
+  it('has no errors, keeps the rest day and orders the days Monday to Sunday', () => {
     expect(result.errors).toEqual([])
-    expect(result.days.map((d) => d.title)).toEqual(['Oberkörper', 'Beine', 'Unterkörper'])
+    expect(result.days.map((d) => [d.weekday, d.title, d.isRest])).toEqual([
+      [0, 'Oberkörper', false],
+      [1, 'Unterkörper', false],
+      [2, 'Ruhetag', true],
+      [5, 'Beine', false],
+    ])
   })
 
   it('maps "Latzug (Obergriff)" to the library, keeps the name and takes the weight as start weight and note', () => {
@@ -39,13 +44,13 @@ describe('parsePlanTable with the example rows', () => {
   })
 
   it('reads "12 (pro Bein)" as 12 reps and keeps the remark', () => {
-    const [lunges] = result.days[1]!.exercises
+    const [lunges] = result.days[3]!.exercises
     expect(lunges).toMatchObject({ exerciseKey: 'ausfallschritte', repMin: 12, repMax: 12, startWeightKg: null })
     expect(lunges?.notes).toBe('Balance · Gewicht: Leicht · Wdh.: 12 (pro Bein)')
   })
 
   it('reads "Max" as 6-15 with a note', () => {
-    const [legRaise] = result.days[2]!.exercises
+    const [legRaise] = result.days[1]!.exercises
     expect(legRaise).toMatchObject({ exerciseKey: 'beinheben_haengend', repMin: 6, repMax: 15, restSeconds: 60 })
     expect(legRaise?.notes).toBe('Core · Bis zum Muskelversagen (Max)')
   })
@@ -53,8 +58,87 @@ describe('parsePlanTable with the example rows', () => {
   it('builds a valid plan for create_plan', () => {
     const { plan, errors } = toImportedPlan(result, 'UL PPL')
     expect(errors).toEqual([])
-    expect(plan.days).toHaveLength(3)
+    expect(plan.days).toHaveLength(4)
+    expect(plan.days[2]).toMatchObject({ weekday: 2, isRest: true, exercises: [] })
     expect(plan.split).toBe('import')
+  })
+})
+
+describe('weekdays and rest days', () => {
+  const week: TableRow[] = [
+    HEADER,
+    ['Mo', 'Upper', 'Latzug (Obergriff)', 3, '8-10', '70 kg', ''],
+    ['', 'Upper', 'Bankdrücken', 3, '8-10', '', ''],
+    ['Di', 'Lower', 'Kniebeuge', 3, '6-8', '', ''],
+    ['Mi', 'Pause', '-', '-', '-', '-', 'Regeneration'],
+    ['Do', 'Push', 'Schulterdrücken', 3, '8-10', '', ''],
+    ['Fr', 'Pull', 'Rudern', 3, '8-10', '', ''],
+    ['Sa', 'Legs', 'Beinpresse', 3, '10-12', '', ''],
+    ['So', 'Ruhetag', '', '', '', '', ''],
+  ]
+
+  it("reads Lennox' week as 7 days with 2 rest days", () => {
+    const result = parsePlanTable(week)
+    expect(result.errors).toEqual([])
+    expect(result.days.map((d) => d.weekday)).toEqual([0, 1, 2, 3, 4, 5, 6])
+    expect(result.days.map((d) => d.title)).toEqual(['Oberkörper', 'Unterkörper', 'Ruhetag', 'Push', 'Pull', 'Beine', 'Ruhetag'])
+    expect(result.days.filter((d) => d.isRest)).toHaveLength(2)
+    expect(result.days[0]!.exercises).toHaveLength(2)
+    const { plan, errors } = toImportedPlan(result, 'Woche')
+    expect(errors).toEqual([])
+    expect(plan.days.filter((d) => d.isRest).every((d) => d.exercises.length === 0)).toBe(true)
+  })
+
+  it('maps long and short weekday names to the same day', () => {
+    const result = parsePlanTable([
+      ['Wochentag', 'Übung', 'Sätze', 'Wdh'],
+      ['Montag', 'Kniebeuge', 3, '5'],
+      ['Mo', 'Beinpresse', 3, '10'],
+      ['Sonntag', 'Rudern', 3, '10'],
+    ])
+    expect(result.days.map((d) => [d.weekday, d.exercises.length])).toEqual([[0, 2], [6, 1]])
+  })
+
+  it('without weekdays ("Tag 1") keeps the old behaviour and skips rest rows', () => {
+    const result = parsePlanTable([
+      ['Tag', 'Fokus', 'Übung', 'Sätze', 'Wdh'],
+      ['Tag 1', 'Push', 'Bankdrücken', 3, '8'],
+      ['Tag 2', 'Pause', '-', '-', '-'],
+      ['Tag 3', 'Pull', 'Rudern', 3, '8'],
+    ])
+    expect(result.errors).toEqual([])
+    expect(result.warnings).toEqual([])
+    expect(result.days.map((d) => [d.title, d.weekday, d.isRest])).toEqual([['Push', null, false], ['Pull', null, false]])
+  })
+
+  it('falls back to no weekdays with a hint when the day column is mixed', () => {
+    const result = parsePlanTable([
+      ['Tag', 'Übung', 'Sätze', 'Wdh'],
+      ['Montag', 'Kniebeuge', 3, '5'],
+      ['Tag 2', 'Rudern', 3, '10'],
+      ['Mittwoch', '-', '', ''],
+    ])
+    expect(result.days.map((d) => d.weekday)).toEqual([null, null])
+    expect(result.days.some((d) => d.isRest)).toBe(false)
+    expect(result.warnings[0]).toMatch(/Nicht alle Einträge/)
+  })
+
+  it('treats a weekday with exercises as a training day even after a pause row', () => {
+    const result = parsePlanTable([
+      ['Tag', 'Fokus', 'Übung', 'Sätze', 'Wdh'],
+      ['Mi', 'Pause', '-', '', ''],
+      ['Mi', 'Core', 'Plank', 3, '30'],
+    ])
+    expect(result.days).toHaveLength(1)
+    expect(result.days[0]).toMatchObject({ weekday: 2, isRest: false, title: 'Core' })
+  })
+
+  it('needs at least one training day', () => {
+    const result = parsePlanTable([
+      ['Tag', 'Fokus', 'Übung', 'Sätze', 'Wdh'],
+      ['Mo', 'Pause', '-', '', ''],
+    ])
+    expect(result.errors).toContain('Die Datei enthält keine Übungen.')
   })
 })
 

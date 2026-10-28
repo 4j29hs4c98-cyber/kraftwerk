@@ -34,6 +34,10 @@ export interface NewPlanExercise {
 export interface NewPlanDay {
   readonly title: string
   readonly exercises: readonly NewPlanExercise[]
+  /** 0 = Montag bis 6 = Sonntag; entweder alle Tage eines Plans oder keiner. */
+  readonly weekday?: number | null
+  /** Ruhetage haben keine Übungen. */
+  readonly isRest?: boolean
 }
 
 export interface NewPlan {
@@ -75,6 +79,10 @@ function dayErrors(day: NewPlanDay, index: number): string[] {
   const errors: string[] = []
   if (day.title.trim() === '') errors.push(`${label}: Bitte gib dem Tag einen Namen.`)
   if (day.title.trim().length > PLAN_LIMITS.dayTitleMax) errors.push(`${label}: Der Name darf höchstens ${PLAN_LIMITS.dayTitleMax} Zeichen lang sein.`)
+  if (day.isRest) {
+    if (day.exercises.length > 0) errors.push(`${label}: Ein Ruhetag hat keine Übungen.`)
+    return errors
+  }
   if (day.exercises.length === 0) errors.push(`${label}: Mindestens eine Übung ist nötig.`)
   if (day.exercises.length > PLAN_LIMITS.maxExercisesPerDay) errors.push(`${label}: Höchstens ${PLAN_LIMITS.maxExercisesPerDay} Übungen pro Tag.`)
   const keys = day.exercises.map((e) => e.exerciseKey)
@@ -89,8 +97,26 @@ export function validatePlan(plan: NewPlan): string[] {
   if (name === '' || name.length > PLAN_LIMITS.planNameMax) errors.push(`Der Planname muss 1 bis ${PLAN_LIMITS.planNameMax} Zeichen lang sein.`)
   if (plan.split.length > PLAN_LIMITS.splitMax) errors.push('Die Split-Bezeichnung ist zu lang.')
   if (plan.days.length === 0) errors.push('Der Plan braucht mindestens einen Trainingstag.')
-  if (plan.days.length > PLAN_LIMITS.maxDays) errors.push(`Höchstens ${PLAN_LIMITS.maxDays} Trainingstage pro Plan.`)
-  return [...errors, ...plan.days.flatMap(dayErrors)]
+  if (plan.days.length > PLAN_LIMITS.maxDays) errors.push(`Höchstens ${PLAN_LIMITS.maxDays} Tage pro Plan.`)
+  if (plan.days.length > 0 && plan.days.every((d) => d.isRest)) errors.push('Der Plan braucht mindestens einen Trainingstag.')
+  return [...errors, ...weekdayErrors(plan.days), ...plan.days.flatMap(dayErrors)]
+}
+
+/** Wie create_plan: entweder alle Tage mit Wochentag oder keiner, jeder Wochentag höchstens einmal. */
+function weekdayErrors(days: readonly NewPlanDay[]): string[] {
+  const weekdays = days.map((d) => d.weekday ?? null).filter((w): w is number => w !== null)
+  if (weekdays.length === 0) return []
+  const errors: string[] = []
+  if (weekdays.some((w) => !Number.isInteger(w) || w < 0 || w > 6)) errors.push('Ungültiger Wochentag.')
+  if (weekdays.length !== days.length) errors.push('Entweder bekommen alle Tage einen Wochentag oder keiner.')
+  if (new Set(weekdays).size !== weekdays.length) errors.push('Jeder Wochentag darf nur einmal im Plan vorkommen.')
+  return errors
+}
+
+/** Tage mit Wochentag werden von Montag bis Sonntag gespeichert, sonst in der gegebenen Reihenfolge. */
+export function orderDays<T extends NewPlanDay>(days: readonly T[]): readonly T[] {
+  const allWeekdays = days.length > 0 && days.every((d) => d.weekday !== null && d.weekday !== undefined)
+  return allWeekdays ? [...days].sort((a, b) => (a.weekday ?? 0) - (b.weekday ?? 0)) : days
 }
 
 const emptyToNull = (value: string | null | undefined): string | null => {
@@ -102,10 +128,12 @@ export function toCreatePlanArgs(plan: NewPlan): CreatePlanArgs {
   return {
     p_name: plan.name.trim(),
     p_split: plan.split,
-    p_days: plan.days.map((day, dayIndex) => ({
+    p_days: orderDays(plan.days).map((day, dayIndex) => ({
       day_index: dayIndex,
+      weekday: day.weekday ?? null,
       title: day.title.trim(),
-      exercises: day.exercises.map((ex, position) => ({
+      is_rest: day.isRest ?? false,
+      exercises: (day.isRest ? [] : day.exercises).map((ex, position) => ({
         exercise_key: ex.exerciseKey,
         position,
         sets: ex.sets,

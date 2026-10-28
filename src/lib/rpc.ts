@@ -17,7 +17,11 @@ export interface CreatePlanExerciseArg {
 
 export interface CreatePlanDayArg {
   readonly day_index: number
+  /** 0 = Montag bis 6 = Sonntag; entweder alle Tage oder keiner. */
+  readonly weekday: number | null
   readonly title: string
+  /** Ruhetage haben keine Übungen. */
+  readonly is_rest: boolean
   readonly exercises: readonly CreatePlanExerciseArg[]
 }
 

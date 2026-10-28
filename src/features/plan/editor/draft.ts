@@ -1,7 +1,8 @@
 import { parseNumber } from '../../profile/body'
 import type { PlanDetail } from '../api'
 import { customKey, defaultRestSeconds, exerciseName, getExercise, HOLD_SECONDS, isCustomKey, isTimed } from '../exercises'
-import { validatePlan, type NewPlan, type NewPlanExercise } from '../planModel'
+import { PLAN_LIMITS, validatePlan, type NewPlan, type NewPlanExercise } from '../planModel'
+import { REST_DAY_TITLE, WEEKDAYS } from '../weekdays'
 
 /** Bearbeitungsstand: Eingabefelder bleiben Text, bis gespeichert wird. */
 export interface DraftExercise {
@@ -19,6 +20,10 @@ export interface DraftExercise {
 export interface DraftDay {
   readonly uid: string
   readonly title: string
+  /** 0 = Montag bis 6 = Sonntag oder null (ohne festen Wochentag). */
+  readonly weekday: number | null
+  /** Ruhetage speichern keine Übungen; die Liste bleibt beim Umschalten im Entwurf erhalten. */
+  readonly isRest: boolean
   readonly exercises: readonly DraftExercise[]
 }
 
@@ -39,7 +44,9 @@ export function draftFromDetail(detail: PlanDetail): PlanDraft {
     split: detail.plan.split ?? 'eigener',
     days: detail.days.map((day, i) => ({
       uid: nextUid(),
-      title: day.title ?? `Tag ${i + 1}`,
+      title: day.title ?? (day.is_rest ? REST_DAY_TITLE : `Tag ${i + 1}`),
+      weekday: day.weekday,
+      isRest: day.is_rest,
       exercises: day.exercises.map((ex) => ({
         uid: nextUid(),
         exerciseKey: ex.exercise_key,
@@ -79,6 +86,32 @@ const mapDay = (draft: PlanDraft, dayUid: string, fn: (day: DraftDay) => DraftDa
 
 export function renameDay(draft: PlanDraft, dayUid: string, title: string): PlanDraft {
   return mapDay(draft, dayUid, (d) => ({ ...d, title }))
+}
+
+export function setDayWeekday(draft: PlanDraft, dayUid: string, weekday: number | null): PlanDraft {
+  return mapDay(draft, dayUid, (d) => ({ ...d, weekday }))
+}
+
+/** Markiert einen Tag als Ruhetag (Titel "Ruhetag") oder macht ihn wieder zum Trainingstag. */
+export function setDayRest(draft: PlanDraft, dayUid: string, isRest: boolean): PlanDraft {
+  return mapDay(draft, dayUid, (d) => {
+    if (d.isRest === isRest) return d
+    const title = isRest ? REST_DAY_TITLE : d.title === REST_DAY_TITLE ? '' : d.title
+    return { ...d, isRest, title }
+  })
+}
+
+/** Hängt einen Ruhetag an; nutzt der Plan Wochentage, bekommt er den ersten freien. */
+export function addRestDay(draft: PlanDraft): PlanDraft {
+  if (draft.days.length >= PLAN_LIMITS.maxDays) return draft
+  const usesWeekdays = draft.days.length > 0 && draft.days.every((d) => d.weekday !== null)
+  const taken = new Set(draft.days.map((d) => d.weekday))
+  const weekday = usesWeekdays ? (WEEKDAYS.find((w) => !taken.has(w)) ?? null) : null
+  return { ...draft, days: [...draft.days, { uid: nextUid(), title: REST_DAY_TITLE, weekday, isRest: true, exercises: [] }] }
+}
+
+export function removeDay(draft: PlanDraft, dayUid: string): PlanDraft {
+  return { ...draft, days: draft.days.filter((d) => d.uid !== dayUid) }
 }
 
 /** Hängt eine Übung an. Ist der Schlüssel am Tag schon vergeben, bekommt eine eigene Übung einen Zähler. */
@@ -146,7 +179,12 @@ export function draftToPlan(draft: PlanDraft): DraftResult {
   const plan: NewPlan = {
     name: draft.name,
     split: draft.split,
-    days: draft.days.map((d) => ({ title: d.title, exercises: d.exercises.map(toExercise) })),
+    days: draft.days.map((d) => ({
+      title: d.title,
+      weekday: d.weekday,
+      isRest: d.isRest,
+      exercises: d.isRest ? [] : d.exercises.map(toExercise),
+    })),
   }
   const errors = validatePlan(plan)
   return errors.length > 0 ? { ok: false, errors } : { ok: true, plan }

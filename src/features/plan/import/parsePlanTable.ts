@@ -1,5 +1,6 @@
 import { normalizeName, defaultRestSeconds, getExercise, customKey } from '../exercises'
 import { PLAN_LIMITS, validatePlan, type NewPlan, type NewPlanExercise } from '../planModel'
+import { parseWeekday, REST_DAY_TITLE } from '../weekdays'
 import { matchExercise } from './matchExercise'
 
 /** Eine Zelle, wie sie aus CSV (Text) oder Excel (Text, Zahl, Datum, Wahrheitswert) kommt. */
@@ -18,6 +19,9 @@ export interface ImportedExercise extends NewPlanExercise {
 export interface ImportedDay {
   readonly title: string
   readonly exercises: readonly ImportedExercise[]
+  /** 0 = Montag bis 6 = Sonntag, nur wenn die Tag-Spalte durchgehend Wochentage enthält. */
+  readonly weekday: number | null
+  readonly isRest: boolean
 }
 
 export interface ImportResult {
@@ -147,8 +151,24 @@ function disambiguateTitles(titles: readonly string[]): string[] {
 
 interface Group {
   readonly key: string
-  readonly focus: string
+  readonly weekday: number | null
+  /** Fokus der ersten Übungszeile (bei reinen Ruhetagen der Tag-Text). */
+  focus: string
+  /** Eine Pause-Zeile hat den Tag als Ruhetag markiert. */
+  restMarked: boolean
   readonly exercises: ImportedExercise[]
+}
+
+/**
+ * Wochentag-Modus: Die Tag-Spalte enthält ausschließlich Wochentage (Montag, Mo ...).
+ * Dann werden Pause-Zeilen zu Ruhetagen. Sonst (z. B. "Tag 1") wie bisher ohne Wochentag.
+ */
+function detectWeekdayMode(dataRows: readonly TableRow[], dayCol: number | undefined, warnings: string[]): boolean {
+  if (dayCol === undefined) return false
+  const texts = dataRows.map((r) => cellText(r[dayCol])).filter((t) => t !== '')
+  const known = texts.filter((t) => parseWeekday(t) !== null).length
+  if (known > 0 && known < texts.length) warnings.push('Nicht alle Einträge in der Tag-Spalte sind Wochentage. Der Plan wird ohne feste Wochentage übernommen, Pausen werden übersprungen.')
+  return texts.length > 0 && known === texts.length
 }
 
 interface RowContext {
@@ -243,35 +263,55 @@ export function parsePlanTable(rows: readonly TableRow[]): ImportResult {
   if (cols.reps === undefined) errors.push('Spalte "Wiederholungen" fehlt.')
   if (cols.day === undefined && cols.focus === undefined) warnings.push('Keine Spalte "Tag" oder "Fokus": alle Übungen landen in einem Trainingstag.')
 
+  const dataRows = rows.slice(headerIndex + 1)
+  const weekdayMode = detectWeekdayMode(dataRows, cols.day, warnings)
   const groups: Group[] = []
+  const groupFor = (key: string, weekday: number | null, focus: string): Group => {
+    const existing = groups.find((g) => g.key === key)
+    if (existing) return existing
+    const created: Group = { key, weekday, focus, restMarked: false, exercises: [] }
+    groups.push(created)
+    return created
+  }
+
   let currentDay = ''
-  rows.slice(headerIndex + 1).forEach((row, offset) => {
+  dataRows.forEach((row, offset) => {
     const rowNumber = headerIndex + offset + 2
     if (row.every((c) => cellText(c) === '')) return
     const dayText = get(row, cols.day)
     if (dayText) currentDay = dayText
     const focus = get(row, cols.focus)
     const name = get(row, cols.exercise)
+    const weekday = weekdayMode ? parseWeekday(currentDay) : null
     if (isRestDay(focus) || isDash(name)) {
-      if (!isRestDay(focus) && name === '' && !isDash(get(row, cols.reps))) warnings.push(`Zeile ${rowNumber}: Keine Übung angegeben, Zeile übersprungen.`)
+      const isRestRow = isRestDay(focus) || !(name === '' && !isDash(get(row, cols.reps)))
+      if (!isRestRow) warnings.push(`Zeile ${rowNumber}: Keine Übung angegeben, Zeile übersprungen.`)
+      else if (weekday !== null) groupFor(`wd:${weekday}`, weekday, currentDay).restMarked = true
       return
     }
-    const key = cols.day !== undefined ? currentDay || focus : focus || 'Tag 1'
-    const group = groups.find((g) => g.key === key) ?? (() => {
-      const created: Group = { key, focus: focus || currentDay, exercises: [] }
-      groups.push(created)
-      return created
-    })()
+    const key = weekday !== null ? `wd:${weekday}` : cols.day !== undefined ? currentDay || focus : focus || 'Tag 1'
+    const group = groupFor(key, weekday, focus || currentDay)
+    // Ein bisher reiner Ruhetag bekommt mit der ersten Übung den Fokus dieser Zeile.
+    if (group.exercises.length === 0 && focus) group.focus = focus
     const parsed = parseExerciseRow(row, { cols, rowNumber, errors, warnings }, name, new Set(group.exercises.map((e) => e.exerciseKey)))
     if (parsed) group.exercises.push(parsed)
   })
 
   if (cols.reps === undefined) return { days: [], errors, warnings }
-  if (groups.length === 0 && errors.length === 0) errors.push('Die Datei enthält keine Übungen.')
-  if (groups.length > PLAN_LIMITS.maxDays) errors.push(`Die Datei enthält ${groups.length} Trainingstage, erlaubt sind höchstens ${PLAN_LIMITS.maxDays}.`)
+  const ordered = weekdayMode ? [...groups].sort((a, b) => (a.weekday ?? 0) - (b.weekday ?? 0)) : groups
+  // Ruhetag nur, wenn am Tag keine Übung steht.
+  const isRest = (g: Group): boolean => g.restMarked && g.exercises.length === 0
+  const trainingGroups = ordered.filter((g) => !isRest(g))
+  if (trainingGroups.length === 0 && errors.length === 0) errors.push('Die Datei enthält keine Übungen.')
+  if (ordered.length > PLAN_LIMITS.maxDays) errors.push(`Die Datei enthält ${ordered.length} Trainingstage, erlaubt sind höchstens ${PLAN_LIMITS.maxDays}.`)
 
-  const titles = disambiguateTitles(groups.map((g) => translateFocus(g.focus || g.key).slice(0, PLAN_LIMITS.dayTitleMax - 2)))
-  const days = groups.map((g, i) => ({ title: titles[i] ?? g.key, exercises: g.exercises }))
+  const titles = disambiguateTitles(trainingGroups.map((g) => translateFocus(g.focus || g.key).slice(0, PLAN_LIMITS.dayTitleMax - 2)))
+  const titleOf = new Map(trainingGroups.map((g, i) => [g, titles[i] ?? g.key]))
+  const days: ImportedDay[] = ordered.map((g) =>
+    isRest(g)
+      ? { title: REST_DAY_TITLE, exercises: [], weekday: g.weekday, isRest: true }
+      : { title: titleOf.get(g) ?? g.key, exercises: g.exercises, weekday: g.weekday, isRest: false },
+  )
   days.forEach((d) => {
     if (d.exercises.length > PLAN_LIMITS.maxExercisesPerDay) {
       errors.push(`Tag "${d.title}" hat ${d.exercises.length} Übungen, erlaubt sind höchstens ${PLAN_LIMITS.maxExercisesPerDay}.`)
@@ -287,6 +327,8 @@ export function toImportedPlan(result: ImportResult, name: string): { readonly p
     split: IMPORT_SPLIT,
     days: result.days.map((d) => ({
       title: d.title,
+      weekday: d.weekday,
+      isRest: d.isRest,
       exercises: d.exercises.map(({ exerciseKey, displayName, sets, repMin, repMax, restSeconds, notes, startWeightKg }) => ({
         exerciseKey,
         displayName,

@@ -8,15 +8,19 @@ export const TEMPLATE_ROWS: readonly (readonly string[])[] = [
 
 export const TEMPLATE_FILE_NAME = 'kraftwerk-plan-vorlage.csv'
 
-/** Erzeugt die Vorlage als Blob und lädt sie herunter, ohne Server-Pfad (funktioniert unter jedem base). */
-export function downloadTemplate(): void {
-  const blob = new Blob([toCsv(TEMPLATE_ROWS)], { type: 'text/csv;charset=utf-8' })
+/** Lädt Zeilen als CSV herunter, ohne Server-Pfad (funktioniert unter jedem base). */
+export function downloadCsv(rows: readonly (readonly string[])[], fileName: string): void {
+  const blob = new Blob([toCsv(rows)], { type: 'text/csv;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
-  link.download = TEMPLATE_FILE_NAME
+  link.download = fileName
   document.body.append(link)
   link.click()
   link.remove()
   setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
+export function downloadTemplate(): void {
+  downloadCsv(TEMPLATE_ROWS, TEMPLATE_FILE_NAME)
 }

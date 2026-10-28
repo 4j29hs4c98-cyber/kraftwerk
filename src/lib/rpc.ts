@@ -1,4 +1,5 @@
 import type { Json } from '../types/database'
+import type { CreateMealItemArg } from '../features/nutrition/mealPlan/model'
 import { supabase, unwrap } from './supabase'
 
 /** Form von p_days für create_plan (in den generierten Typen nur als Json geführt). */
@@ -51,4 +52,18 @@ function numberField(value: Json, key: string): number {
 export async function rpcTrainingStats(): Promise<TrainingStatsResult> {
   const data = unwrap(await supabase.rpc('training_stats'))
   return { workoutsCount: numberField(data, 'workouts_count'), totalVolume: numberField(data, 'total_volume') }
+}
+
+const mealItemsToJson = (value: readonly CreateMealItemArg[]): Json => value as unknown as Json
+
+/** Legt einen neuen aktiven Ernährungsplan an (alter Plan aus, neuer an, in einer Transaktion). */
+export async function rpcCreateMealPlan(name: string, items: readonly CreateMealItemArg[]): Promise<string> {
+  return unwrap(await supabase.rpc('create_meal_plan', { p_name: name, p_items: mealItemsToJson(items) }))
+}
+
+/** Rohdaten aus exercise_progress; geprüft wird in parseExerciseProgress. */
+export async function rpcExerciseProgress(exerciseKey: string): Promise<Json> {
+  const { data, error } = await supabase.rpc('exercise_progress', { p_exercise_key: exerciseKey })
+  if (error) throw error
+  return data ?? []
 }

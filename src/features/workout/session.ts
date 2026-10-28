@@ -72,8 +72,13 @@ export interface ParsedSet {
 export const SET_LIMITS = { weightKg: 1000, reps: 1000 } as const
 
 export function parseSet(set: SetEntry): ParsedSet | null {
-  const weight = parseNumber(set.weight === '' ? '0' : set.weight)
-  const reps = parseNumber(set.reps)
+  return parseSetValues(set.weight, set.reps)
+}
+
+/** Prüft Gewicht (leer = 0 kg) und Wiederholungen aus Eingabefeldern wie im Workout. */
+export function parseSetValues(weightText: string, repsText: string): ParsedSet | null {
+  const weight = parseNumber(weightText === '' ? '0' : weightText)
+  const reps = parseNumber(repsText)
   if (weight === null || weight > SET_LIMITS.weightKg) return null
   if (reps === null || reps > SET_LIMITS.reps || !Number.isInteger(reps)) return null
   return { weightKg: Math.round(weight * 100) / 100, reps }

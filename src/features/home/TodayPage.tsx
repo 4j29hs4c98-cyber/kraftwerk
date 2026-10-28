@@ -10,6 +10,7 @@ import { useProfile } from '../profile/ProfileProvider'
 import { fetchTrainingStats } from '../progress/api'
 import { weekStreak } from '../progress/streak'
 import { StaleWorkouts } from '../workout/StaleWorkouts'
+import { PauseIndicator } from './PauseIndicator'
 
 function greeting(now: Date): string {
   const h = now.getHours()
@@ -44,6 +45,8 @@ export function TodayPage() {
           overview.reload()
         }}
       />
+
+      {stats.status === 'ready' && <PauseIndicator finishedDates={stats.data.finishedDates} now={now} />}
 
       <section aria-label="Nächstes Training" className="mb-6">
         {overview.status === 'loading' && <LoadingState label="Training wird geladen" />}

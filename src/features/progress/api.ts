@@ -1,13 +1,17 @@
 import { rpcTrainingStats } from '../../lib/rpc'
 import { check, supabase, unwrap, unwrapMaybe } from '../../lib/supabase'
-import type { Tables } from '../../types/database'
+import type { Tables, TablesInsert } from '../../types/database'
 import { BODY_WEIGHT_LIMIT, sortChronologically } from './weights'
 
 export type BodyWeightRow = Tables<'body_weights'>
 
-/** Ein Wert pro Tag: vorhandener Eintrag wird überschrieben. */
-export async function upsertBodyWeight(measuredOn: string, weightKg: number): Promise<void> {
-  check(await supabase.from('body_weights').upsert({ measured_on: measuredOn, weight_kg: weightKg }, { onConflict: 'user_id,measured_on' }))
+/**
+ * Ein Wert pro Tag: vorhandener Eintrag wird überschrieben. Ohne Körperfett-Angabe bleibt
+ * ein schon gespeicherter Körperfettwert des Tages erhalten (Feld wird nicht mitgeschickt).
+ */
+export async function upsertBodyWeight(measuredOn: string, weightKg: number, bodyFatPct: number | null = null): Promise<void> {
+  const row: TablesInsert<'body_weights'> = { measured_on: measuredOn, weight_kg: weightKg, ...(bodyFatPct === null ? {} : { body_fat_pct: bodyFatPct }) }
+  check(await supabase.from('body_weights').upsert(row, { onConflict: 'user_id,measured_on' }))
 }
 
 export async function deleteBodyWeight(id: string): Promise<void> {
@@ -49,4 +53,13 @@ export async function fetchTrainingStats(): Promise<TrainingStats> {
     totalWorkouts: stats.workoutsCount,
     totalVolumeKg: Math.round(stats.totalVolume),
   }
+}
+
+/** Wie viele Satz-Zeilen für die Übungsauswahl höchstens gelesen werden (jüngste zuerst). */
+const LOGGED_SETS_SCAN = 5000
+
+/** Schlüssel aller Übungen, die schon mindestens einmal geloggt wurden. */
+export async function fetchLoggedExerciseKeys(): Promise<string[]> {
+  const rows = unwrap(await supabase.from('workout_sets').select('exercise_key').order('created_at', { ascending: false }).limit(LOGGED_SETS_SCAN))
+  return [...new Set(rows.map((r) => r.exercise_key))]
 }

@@ -7,11 +7,13 @@ import { toMessage } from '../../lib/supabase'
 import { useToday } from '../../lib/useToday'
 import { parseNumber, WEIGHT_RANGE } from '../profile/body'
 import { upsertBodyWeight } from './api'
+import { BODY_FAT_RANGE, parseBodyFat } from './weights'
 
 export function WeightForm({ onSaved }: { readonly onSaved: () => void }) {
   const [date, setDate] = useState(() => toISODate(new Date()))
   const today = useToday((previous, next) => setDate((current) => (current === previous ? next : current)))
   const [weight, setWeight] = useState('')
+  const [bodyFat, setBodyFat] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -19,12 +21,15 @@ export function WeightForm({ onSaved }: { readonly onSaved: () => void }) {
     event.preventDefault()
     const kg = parseNumber(weight)
     if (kg === null || kg < WEIGHT_RANGE.min || kg > WEIGHT_RANGE.max) return setError(`Bitte gib ein Gewicht zwischen ${WEIGHT_RANGE.min} und ${WEIGHT_RANGE.max} kg ein.`)
+    const fat = parseBodyFat(bodyFat)
+    if (fat === undefined) return setError(`Bitte gib den Körperfettanteil zwischen ${BODY_FAT_RANGE.min} und ${BODY_FAT_RANGE.max} % ein oder lass das Feld leer.`)
     if (!date || date > today) return setError('Bitte wähle ein Datum, das nicht in der Zukunft liegt.')
     setError(null)
     setBusy(true)
     try {
-      await upsertBodyWeight(date, Math.round(kg * 100) / 100)
+      await upsertBodyWeight(date, Math.round(kg * 100) / 100, fat)
       setWeight('')
+      setBodyFat('')
       onSaved()
     } catch (err) {
       setError(toMessage(err, 'Das Gewicht konnte nicht gespeichert werden.'))
@@ -39,6 +44,15 @@ export function WeightForm({ onSaved }: { readonly onSaved: () => void }) {
         <Field label="Gewicht" inputMode="decimal" suffix="kg" placeholder="75,5" value={weight} onChange={(e) => setWeight(e.target.value)} />
         <Field label="Datum" type="date" max={today} value={date} onChange={(e) => setDate(e.target.value)} />
       </div>
+      <Field
+        label="Körperfett (optional)"
+        inputMode="decimal"
+        suffix="%"
+        placeholder="z. B. 18,5"
+        value={bodyFat}
+        onChange={(e) => setBodyFat(e.target.value)}
+        hint="Waagen messen den Körperfettanteil sehr ungenau und schwankend. Aussagekräftig ist nur der Trend über Wochen."
+      />
       <p className="text-xs text-muted">Pro Tag zählt ein Wert. Ein neuer Eintrag am selben Tag ersetzt den alten.</p>
       <InlineError message={error} />
       <Button type="submit" loading={busy}>Gewicht speichern</Button>

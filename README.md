@@ -62,12 +62,13 @@ src/
     profile/      Profil-Typen, Auswahl-Felder, Einstellungen
     plan/         Übungsbibliothek, Plangenerator (rein, getestet), Plan-Ansicht, Editor (editor/), Excel-Import (import/)
     workout/      Workout-Modus, Progression (rein, getestet), Pausen-Timer
-    nutrition/    Kalorien- und Eiweißziel (rein, getestet), Tagesprotokoll
-    progress/     Gewichtskurve, Kalender, Wochenserie (rein, getestet)
-    home/         Startseite, Heute-Ansicht, 404
+    nutrition/    Kalorien- und Makroziele (rein, getestet), Tagesprotokoll, Ernährungsplan (mealPlan/: Modell, Import, Editor, Planeinhaltung)
+    progress/     Kalender, Wochenserie, Kurven (charts/: eigene SVG-Kurven, Rechenlogik getestet), Trainingsverlauf (history/)
+    home/         Startseite, Heute-Ansicht mit Pausen-Anzeige (pause.ts, getestet), 404
 ```
 
-Datenzugriff liegt pro Feature in `api.ts`. Reine Logik (`generator.ts`, `progression.ts`, `session.ts`, `calc.ts`, `streak.ts`) hat keine
+Datenzugriff liegt pro Feature in `api.ts`. Reine Logik (`generator.ts`, `progression.ts`, `session.ts`, `calc.ts`, `streak.ts`, `chartMath.ts`,
+`parseMealTable.ts`, `pause.ts` und weitere) hat keine
 Abhängigkeit zu React oder Supabase und ist mit Vitest abgedeckt.
 
 ## Fachliche Regeln
@@ -80,6 +81,15 @@ Abhängigkeit zu React oder Supabase und ist mit Vitest abgedeckt.
 - **Ohne Geräte:** Reicht die Ausrüstung nicht für mindestens 4 Übungen pro Tag, wird auf Ganzkörper A/B ausgewichen (höchstens 3 Einheiten pro Woche empfohlen).
 - **Ernährung:** Mifflin-St Jeor mal Aktivitätsfaktor aus den Trainingstagen. Muskelaufbau +300 kcal, Fett verlieren -400 kcal. Eiweiß 1,8 g/kg (Fett verlieren 2,0).
   Das Ziel fällt nie unter den Grundumsatz und nie unter 1200 kcal (w) bzw. 1500 kcal (m, d).
+- **Makros:** Fett deckt 25 % der Zielkalorien (9 kcal/g), Kohlenhydrate den Rest nach Eiweiß (4 kcal/g) und Fett, nie negativ.
+- **Ernährungsplan heute:** Es gelten die Einträge des Wochentags, "Täglich" und je nach Tag "Trainingstag" oder "Ruhetag". Trainingstag ist, wenn an dem Tag
+  ein Workout begonnen wurde (abgeschlossen oder offen); der Schalter auf der Ernährungsseite überstimmt das für den Tag. "Plan eingehalten" zählt von Montag
+  bis heute die Mahlzeiten mit "Wie geplant"; ersetzte Mahlzeiten zählen nicht.
+- **Pausen-Anzeige:** Kalendertage seit dem letzten abgeschlossenen Training (lokal). 0 bis 7 grün, 8 bis 14 gelb, 15 bis 21 orange, ab 22 rot.
+- **Kurven:** Kraft aus der RPC `exercise_progress` (höchstes Gewicht und geschätztes 1RM nach Epley je Trainingstag). Körpergewicht und Körperfett
+  als Tageswerte plus gleitender 7-Tage-Schnitt; die Zusammenfassung vergleicht den Schnitt über die letzten 4 Wochen.
+- **Verlauf:** Abgeschlossene Trainings lassen sich unter Fortschritt korrigieren (Sätze ändern, löschen, nachtragen, Training löschen). Vorschläge
+  fürs nächste Training lesen die Sätze bei jedem Start frisch aus der Datenbank, Korrekturen wirken also sofort.
 - **Pläne speichern:** immer über die RPC `create_plan` (eine Transaktion: alter Plan aus, neuer an). Bearbeiten und Import erzeugen einen neuen aktiven Plan.
 
 ## Plan-Import (Excel oder CSV)
@@ -97,3 +107,19 @@ Auf der Plan-Seite unter "Plan aus Excel importieren" (.xlsx oder .csv, höchste
 - **Grenzen:** höchstens 7 Tage, 15 Übungen pro Tag, Namen 80 und Hinweise 300 Zeichen, 1 bis 20 Sätze, 1 bis 100 Wiederholungen.
   Fehler werden pro Zeile angezeigt; gespeichert wird erst nach der Vorschau mit "Übernehmen".
 - Die Excel-Bibliothek (`read-excel-file`) wird erst beim Import nachgeladen und liegt nicht im Haupt-Bundle.
+
+## Ernährungsplan-Import (Excel oder CSV)
+
+Auf der Ernährungsseite unter "Ernährungsplan" > "Importieren" (.xlsx oder .csv, höchstens 2 MB). "Vorlage herunterladen" liefert eine CSV-Vorlage
+mit drei Beispielzeilen (täglich, Trainingstag mit Carb-Loading vor dem Training, Ruhetag).
+
+- **Eine Zeile pro Lebensmittel**, darüber eine Kopfzeile. Spaltennamen werden tolerant erkannt (Groß/Klein, Umlaute, Einheiten in Klammern):
+  `Tag`/`Wochentag`, `Mahlzeit` (Pflicht), `Lebensmittel`/`Name` (Pflicht), `Menge`, `kcal`/`Kalorien`, `Eiweiß`/`Protein`,
+  `Kohlenhydrate`/`KH`/`Carbs`, `Fett`, `Hinweis`/`Notiz`.
+- **Tag:** Montag bis Sonntag (auch Mo, Di ...), `Trainingstag`, `Ruhetag`, `Täglich`/`Alle`. Ohne Tag-Spalte gilt alles täglich.
+- **Mahlzeit:** Frühstück, Snack vormittags, Mittag(essen), Snack nachmittags, Abend(essen), Vor dem Training, Nach dem Training, Spät/Spätmahlzeit.
+- Leere Tag- oder Mahlzeit-Zellen gehören zur Zeile darüber. Zeilen mit Lebensmittel "-" werden übersprungen.
+- **Zahlen:** deutsche Dezimalkommas (`32,5`), Einheiten werden ignoriert (`160 kcal`, `12 g`), leere Zellen bleiben leer.
+- **Grenzen:** 1 bis 300 Einträge, Name 120, Menge 60 und Hinweis 300 Zeichen, kcal 0 bis 5000, Makros 0 bis 1000 g.
+  Fehler werden pro Zeile angezeigt; gespeichert wird erst nach der Vorschau mit "Übernehmen" (RPC `create_meal_plan`, ersetzt den aktiven Plan).
+- Im Editor lassen sich Einträge hinzufügen, ändern und löschen; Speichern übergibt immer die komplette Liste an `create_meal_plan`.

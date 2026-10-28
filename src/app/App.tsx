@@ -14,6 +14,7 @@ const OnboardingPage = lazy(() => import('../features/onboarding/OnboardingPage'
 const PlanPage = lazy(() => import('../features/plan/PlanPage').then((m) => ({ default: m.PlanPage })))
 const ProfilePage = lazy(() => import('../features/profile/ProfilePage').then((m) => ({ default: m.ProfilePage })))
 const ProgressPage = lazy(() => import('../features/progress/ProgressPage').then((m) => ({ default: m.ProgressPage })))
+const WorkoutDetailPage = lazy(() => import('../features/progress/history/WorkoutDetailPage').then((m) => ({ default: m.WorkoutDetailPage })))
 const WorkoutPage = lazy(() => import('../features/workout/WorkoutPage').then((m) => ({ default: m.WorkoutPage })))
 
 export function App() {
@@ -34,6 +35,7 @@ export function App() {
             <Route path="/plan" element={<PlanPage />} />
             <Route path="/ernaehrung" element={<NutritionPage />} />
             <Route path="/fortschritt" element={<ProgressPage />} />
+            <Route path="/fortschritt/verlauf/:workoutId" element={<WorkoutDetailPage />} />
             <Route path="/profil" element={<ProfilePage />} />
           </Route>
         </Route>

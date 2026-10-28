@@ -2,9 +2,11 @@ import { Card, PageHeader, SectionTitle, Stat } from '../../components/Card'
 import { ErrorState, LoadingState } from '../../components/States'
 import { useAsync } from '../../lib/useAsync'
 import { fetchBodyWeights, fetchTrainingStats } from './api'
+import { BodyFatTrend, WeightTrend } from './charts/BodyCharts'
+import { StrengthChart } from './charts/StrengthChart'
+import { HistoryList } from './history/HistoryList'
 import { MonthCalendar } from './MonthCalendar'
 import { trainingDaysInMonth, weekStreak } from './streak'
-import { WeightChart } from './WeightChart'
 import { WeightForm } from './WeightForm'
 
 const NUMBER = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 1 })
@@ -17,6 +19,7 @@ export function ProgressPage() {
   const stats = useAsync(fetchTrainingStats, [])
   const weights = useAsync(fetchBodyWeights, [])
   const now = new Date()
+  const hasBodyFat = weights.status === 'ready' && weights.data.some((w) => w.body_fat_pct !== null)
 
   return (
     <>
@@ -40,6 +43,13 @@ export function ProgressPage() {
       )}
 
       <div className="mt-8">
+        <SectionTitle>Kraft je Übung</SectionTitle>
+      </div>
+      <Card>
+        <StrengthChart />
+      </Card>
+
+      <div className="mt-8">
         <SectionTitle>Körpergewicht</SectionTitle>
       </div>
       <Card>
@@ -53,13 +63,29 @@ export function ProgressPage() {
                 <span className="ml-1 text-muted">kg aktuell</span>
               </p>
             )}
-            <WeightChart points={weights.data.map((w) => ({ date: w.measured_on, weightKg: w.weight_kg }))} />
+            <WeightTrend rows={weights.data} />
           </>
         )}
         <div className="mt-4 border-t border-line pt-4">
           <WeightForm onSaved={weights.reload} />
         </div>
       </Card>
+
+      {hasBodyFat && weights.status === 'ready' && (
+        <>
+          <div className="mt-8">
+            <SectionTitle>Körperfettanteil</SectionTitle>
+          </div>
+          <Card>
+            <BodyFatTrend rows={weights.data} />
+          </Card>
+        </>
+      )}
+
+      <div className="mt-8">
+        <SectionTitle>Verlauf</SectionTitle>
+      </div>
+      <HistoryList />
     </>
   )
 }

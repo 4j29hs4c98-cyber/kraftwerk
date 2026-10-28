@@ -62,3 +62,23 @@ export function calculateTarget(input: NutritionInput): NutritionTarget {
 export function ageFromBirthYear(birthYear: number, today: Date): number {
   return today.getFullYear() - birthYear
 }
+
+export interface MacroTargets {
+  readonly proteinG: number
+  readonly carbsG: number
+  readonly fatG: number
+}
+
+/** Anteil der Kalorien aus Fett und Energiegehalt je Gramm. */
+export const FAT_KCAL_SHARE = 0.25
+const KCAL_PER_G = { protein: 4, carbs: 4, fat: 9 } as const
+
+/**
+ * Makroziele aus Kalorien- und Eiweißziel: Fett deckt 25 % der Kalorien,
+ * Kohlenhydrate den Rest nach Eiweiß und Fett (nie negativ).
+ */
+export function macroTargets(kcal: number, proteinG: number): MacroTargets {
+  const fatG = Math.round((kcal * FAT_KCAL_SHARE) / KCAL_PER_G.fat)
+  const rest = kcal - proteinG * KCAL_PER_G.protein - fatG * KCAL_PER_G.fat
+  return { proteinG, fatG, carbsG: Math.max(0, Math.round(rest / KCAL_PER_G.carbs)) }
+}

@@ -14,7 +14,7 @@ function toCell(value: unknown): Cell {
 
 /** Liest die erste Tabelle einer .xlsx- oder .csv-Datei. Die Excel-Bibliothek wird erst hier nachgeladen. */
 export async function readTable(file: File): Promise<readonly TableRow[]> {
-  if (file.size > MAX_FILE_BYTES) throw new UserFacingError('Die Datei ist größer als 2 MB. Bitte nur den Trainingsplan exportieren.')
+  if (file.size > MAX_FILE_BYTES) throw new UserFacingError('Die Datei ist größer als 2 MB. Bitte nur die Tabelle mit dem Plan exportieren.')
   const name = file.name.toLowerCase()
   if (name.endsWith('.csv')) return parseCsv(await file.text())
   if (!name.endsWith('.xlsx')) throw new UserFacingError('Bitte wähle eine .xlsx- oder .csv-Datei.')

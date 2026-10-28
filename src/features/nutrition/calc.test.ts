@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { activityFactor, ageFromBirthYear, calculateTarget, kcalFloor, mifflinStJeor } from './calc'
+import { activityFactor, ageFromBirthYear, calculateTarget, kcalFloor, macroTargets, mifflinStJeor } from './calc'
 
 describe('mifflinStJeor', () => {
   it('men: 10w + 6.25h - 5a + 5', () => {
@@ -71,5 +71,15 @@ describe('kcal floor', () => {
 describe('ageFromBirthYear', () => {
   it('uses the current year', () => {
     expect(ageFromBirthYear(2009, new Date(2026, 9, 27))).toBe(17)
+  })
+})
+
+describe('macroTargets', () => {
+  it('fat is 25 % of kcal, carbs fill the rest after protein and fat', () => {
+    // Fett 2400 * 0,25 / 9 = 66,7 -> 67 g; Rest 2400 - 160*4 - 67*9 = 1157 kcal -> 289 g
+    expect(macroTargets(2400, 160)).toEqual({ proteinG: 160, fatG: 67, carbsG: 289 })
+  })
+  it('never returns negative carbs', () => {
+    expect(macroTargets(1200, 300).carbsG).toBe(0)
   })
 })

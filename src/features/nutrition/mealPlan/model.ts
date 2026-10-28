@@ -37,7 +37,7 @@ export const isMealSlot = (value: string): value is MealSlot => (MEAL_SLOTS as r
 export const MEAL_LIMITS = {
   planNameMax: 80,
   nameMax: 120,
-  amountMax: 60,
+  amountMax: 500,
   notesMax: 300,
   kcalMax: 5000,
   macroMax: 1000,

@@ -74,7 +74,7 @@ describe('validateMealItems', () => {
   })
   it('rejects empty lists, missing names and out of range values', () => {
     expect(validateMealItems([])).toHaveLength(1)
-    const errors = validateMealItems([item({ name: ' ' }), item({ kcal: 6000 }), item({ fatG: -1 }), item({ amount: 'x'.repeat(61) })])
+    const errors = validateMealItems([item({ name: ' ' }), item({ kcal: 6000 }), item({ fatG: -1 }), item({ amount: 'x'.repeat(501) })])
     expect(errors).toHaveLength(4)
     expect(errors[0]).toContain('Name fehlt')
   })

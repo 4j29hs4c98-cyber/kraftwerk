@@ -1,11 +1,22 @@
+import { useState } from 'react'
 import { IconCheck } from '../../app/icons'
+import { Button } from '../../components/Button'
 import { exerciseName, getExercise, MUSCLE_LABELS, repsUnitLabel } from '../plan/exercises'
-import type { ExerciseEntry, SetEntry } from './session'
+import { ExercisePicker } from '../plan/editor/ExercisePicker'
+import type { ExercisePick, ExerciseEntry, SetEntry } from './session'
+import { pickCustom, pickLibrary } from './session'
 
 interface Props {
   readonly entry: ExerciseEntry
+  /** Schlüssel, die im Training schon vorkommen (der Picker sperrt sie). */
+  readonly taken: ReadonlySet<string>
+  /** Tausch oder Löschen läuft: keine Eingaben bis es fertig ist. */
+  readonly busy: boolean
   readonly onEdit: (setIndex: number, patch: Partial<SetEntry>) => void
   readonly onToggle: (setIndex: number) => void
+  readonly onSwap: (pick: ExercisePick) => void
+  readonly onAddSet: () => void
+  readonly onRemoveSet: () => void
 }
 
 function hint(entry: ExerciseEntry): string {
@@ -23,10 +34,12 @@ function hint(entry: ExerciseEntry): string {
 const inputClass =
   'min-h-12 w-full rounded-xl border border-line bg-surface-2 px-2 text-center text-lg font-semibold tabular-nums focus:border-accent focus:outline-none disabled:opacity-60'
 
-export function ExerciseBlock({ entry, onEdit, onToggle }: Props) {
-  const exercise = getExercise(entry.planExercise.exercise_key)
+export function ExerciseBlock({ entry, taken, busy, onEdit, onToggle, onSwap, onAddSet, onRemoveSet }: Props) {
+  const [picking, setPicking] = useState(false)
+  const exercise = getExercise(entry.key)
+  const locked = busy || entry.sets.some((s) => s.saving)
   const done = entry.sets.filter((s) => s.loggedId !== null).length
-  const { rep_min: repMin, rep_max: repMax, rest_seconds: rest, exercise_key: key, display_name: displayName, notes } = entry.planExercise
+  const { repMin, repMax, restSeconds: rest, key, displayName, notes } = entry
   const unit = repsUnitLabel(key)
   const muscle = exercise ? `${MUSCLE_LABELS[exercise.muscle]} · ` : ''
 
@@ -39,10 +52,35 @@ export function ExerciseBlock({ entry, onEdit, onToggle }: Props) {
             {muscle}Ziel {repMin}-{repMax} {unit} · {rest ?? 0} s Pause
           </p>
         </div>
-        <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-bold tabular-nums ${done === entry.sets.length ? 'bg-ok/15 text-ok' : 'bg-surface-2 text-muted'}`}>
-          {done}/{entry.sets.length}
-        </span>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setPicking((open) => !open)}
+            aria-expanded={picking}
+            disabled={locked}
+            className="min-h-9 rounded-lg px-2 text-xs font-semibold text-muted hover:bg-surface-2 hover:text-accent disabled:opacity-40"
+          >
+            Tauschen
+          </button>
+          <span className={`rounded-full rounded-full px-2.5 py-1 text-xs font-bold tabular-nums ${done === entry.sets.length ? 'bg-ok/15 text-ok' : 'bg-surface-2 text-muted'}`}>
+            {done}/{entry.sets.length}
+          </span>
+          </div>
       </header>
+      {picking && (
+        <ExercisePicker
+          taken={taken}
+          onPickLibrary={(pickedKey) => {
+            setPicking(false)
+            onSwap(pickLibrary(pickedKey))
+          }}
+          onAddCustom={(name) => {
+            setPicking(false)
+            onSwap(pickCustom(name))
+          }}
+          onClose={() => setPicking(false)}
+        />
+      )}
       {notes && <p className="mt-2 rounded-lg bg-surface-2 px-3 py-2 text-sm">{notes}</p>}
       <p className="mt-2 text-xs text-muted">{hint(entry)}</p>
 
@@ -64,7 +102,7 @@ export function ExerciseBlock({ entry, onEdit, onToggle }: Props) {
                 className={inputClass}
                 value={set.weight}
                 placeholder="0"
-                disabled={isLogged || set.saving}
+                disabled={isLogged || set.saving || busy}
                 onChange={(e) => onEdit(i, { weight: e.target.value })}
               />
               <input
@@ -72,14 +110,14 @@ export function ExerciseBlock({ entry, onEdit, onToggle }: Props) {
                 inputMode="numeric"
                 className={inputClass}
                 value={set.reps}
-                disabled={isLogged || set.saving}
+                disabled={isLogged || set.saving || busy}
                 onChange={(e) => onEdit(i, { reps: e.target.value })}
               />
               <button
                 type="button"
                 aria-label={isLogged ? `Satz ${i + 1} wieder öffnen` : `Satz ${i + 1} abhaken`}
                 aria-pressed={isLogged}
-                disabled={set.saving}
+                disabled={set.saving || busy}
                 onClick={() => onToggle(i)}
                 className={`flex size-12 items-center justify-center rounded-xl border-2 transition ${
                   isLogged ? 'border-ok bg-ok text-bg' : 'border-line text-muted hover:border-accent hover:text-accent'
@@ -91,6 +129,14 @@ export function ExerciseBlock({ entry, onEdit, onToggle }: Props) {
           )
         })}
       </ol>
+      <div className="mt-3 flex gap-2">
+        <Button variant="ghost" className="min-h-11 flex-1" disabled={locked} onClick={onAddSet}>
+          Satz hinzufügen
+        </Button>
+        <Button variant="ghost" className="min-h-11 flex-1" disabled={entry.sets.length <= 1 || locked} onClick={onRemoveSet}>
+          Letzten Satz entfernen
+        </Button>
+      </div>
     </section>
   )
 }

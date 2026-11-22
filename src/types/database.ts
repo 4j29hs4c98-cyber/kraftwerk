@@ -99,6 +99,7 @@ export type Database = {
       }
       foods: {
         Row: {
+          barcode: string | null
           carbs_100: number
           created_at: string
           default_grams: number | null
@@ -110,6 +111,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          barcode?: string | null
           carbs_100: number
           created_at?: string
           default_grams?: number | null
@@ -121,6 +123,7 @@ export type Database = {
           user_id?: string
         }
         Update: {
+          barcode?: string | null
           carbs_100?: number
           created_at?: string
           default_grams?: number | null

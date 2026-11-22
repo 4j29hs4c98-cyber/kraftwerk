@@ -27,7 +27,7 @@ import { ageFromBirthYear, calculateTarget, type NutritionTarget } from './calc'
 import { EntryList } from './EntryList'
 import { createFood, fetchFoods } from './foods/api'
 import { BUILTIN_FOODS } from './foods/builtin'
-import { mergeFoods } from './foods/foodMath'
+import { mergeFoods, type NewFood } from './foods/foodMath'
 import { FreeEntry } from './foods/FreeEntry'
 import { MyFoodsPanel } from './foods/MyFoodsPanel'
 import { MacroCard } from './MacroCard'
@@ -187,6 +187,17 @@ export function NutritionPage() {
       ownFoods.reload()
     }, 'Das Lebensmittel konnte nicht gespeichert werden.')
 
+  /** Gescanntes Produkt als eigenes Lebensmittel mit Barcode speichern; ein vorhandener Barcode liefert das vorhandene Lebensmittel. */
+  async function saveBarcodeFood(food: NewFood) {
+    try {
+      const saved = await createFood(food)
+      ownFoods.reload()
+      return saved
+    } catch (err) {
+      throw new Error(toMessage(err, 'Das Lebensmittel konnte nicht gespeichert werden.'))
+    }
+  }
+
   function chooseVariant(slot: MealSlot, name: string) {
     const next = withVariantChoice(variantChoices, day, slot, name, today)
     setVariantChoices(next)
@@ -336,7 +347,7 @@ export function NutritionPage() {
         >
           Freien Eintrag hinzufügen
         </SectionTitle>
-        <FreeEntry foods={foods} onAdd={addFree} onSaveFood={saveOwnFood} />
+        <FreeEntry foods={foods} onAdd={addFree} onSaveFood={saveOwnFood} onSaveBarcodeFood={saveBarcodeFood} />
         {ownFoods.status === 'error' && <p className="mt-2 text-xs text-muted">Eigene Lebensmittel konnten nicht geladen werden, die Grundliste steht trotzdem bereit.</p>}
       </Card>
 

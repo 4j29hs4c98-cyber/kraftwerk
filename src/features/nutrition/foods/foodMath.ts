@@ -9,6 +9,13 @@ export const FOOD_DB_LIMITS = { nameMax: 80, kcal100Max: 1000, macro100Max: 100,
 export interface Food extends FoodNutrients {
   /** id aus der Tabelle foods, null für die Grundliste. */
   readonly id: string | null
+  /** Barcode (EAN/UPC), nur bei eigenen Lebensmitteln gesetzt. */
+  readonly barcode?: string | null
+}
+
+/** Neues eigenes Lebensmittel, optional mit Barcode. */
+export interface NewFood extends FoodNutrients {
+  readonly barcode?: string | null
 }
 
 export interface Nutrients {

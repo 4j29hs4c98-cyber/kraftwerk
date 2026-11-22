@@ -1,8 +1,9 @@
 import { cachedRead } from '../../../lib/offline'
-import { check, supabase, unwrap, UserFacingError } from '../../../lib/supabase'
+import { check, supabase, unwrap, unwrapMaybe, UserFacingError } from '../../../lib/supabase'
 import type { Tables } from '../../../types/database'
 import type { FoodNutrients } from './builtin'
-import { validateFoodDef, type Food } from './foodMath'
+import { conflictOutcome, normalizeBarcode } from './barcode'
+import { validateFoodDef, type Food, type NewFood } from './foodMath'
 
 const UNIQUE_VIOLATION = '23505'
 const MAX_FOODS = 500
@@ -18,6 +19,7 @@ function toFood(row: Tables<'foods'>): Food {
     carbs100: Number(row.carbs_100),
     fat100: Number(row.fat_100),
     defaultGrams: row.default_grams === null ? null : Number(row.default_grams),
+    barcode: row.barcode,
   }
 }
 
@@ -41,10 +43,18 @@ export function fetchFoods(): Promise<Food[]> {
   return cachedRead('foods:own', async () => unwrap(await supabase.from('foods').select('*').order('name').limit(MAX_FOODS)).map(toFood), { empty: [] })
 }
 
-export async function createFood(food: FoodNutrients): Promise<Food> {
+/** Legt ein Lebensmittel an. Gibt es den Barcode schon, kommt das vorhandene Lebensmittel zurück, statt zu scheitern. */
+export async function createFood(food: NewFood): Promise<Food> {
   ensureValid(food)
-  const result = await supabase.from('foods').insert(toRow(food)).select('*').single()
-  if (isUniqueViolation(result.error)) throw new UserFacingError(DUPLICATE)
+  const barcode = food.barcode == null ? null : normalizeBarcode(food.barcode)
+  if (food.barcode != null && barcode === null) throw new UserFacingError('Der Barcode ist ungültig. Er hat 8 bis 14 Ziffern.')
+  const result = await supabase.from('foods').insert({ ...toRow(food), barcode }).select('*').single()
+  if (isUniqueViolation(result.error)) {
+    // Je nach Index kann der Name zuerst anschlagen; deshalb nicht am Meldungstext, sondern am Barcode entscheiden.
+    const row = barcode === null ? null : unwrapMaybe(await supabase.from('foods').select('*').eq('barcode', barcode).limit(1).maybeSingle())
+    if (conflictOutcome(barcode, row ? toFood(row) : null) === 'reuse' && row) return toFood(row)
+    throw new UserFacingError(DUPLICATE)
+  }
   return toFood(unwrap(result))
 }
 

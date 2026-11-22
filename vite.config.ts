@@ -63,6 +63,17 @@ export default defineConfig(({ command }) => {
               urlPattern: ({ url }) => url.hostname.endsWith('.supabase.co'),
               handler: 'NetworkOnly',
             },
+            {
+              // Produktdaten beim Scannen immer frisch und nie aus dem Cache; bekannte Codes liegen offline in den eigenen Lebensmitteln.
+              urlPattern: ({ url }) => url.hostname === 'world.openfoodfacts.org',
+              handler: 'NetworkOnly',
+            },
+            {
+              // Scanner-Wasm (rund 0,9 MB): nicht im Precache, damit die Installation klein bleibt. Es wird beim ersten Scan geholt und bleibt dann offline verfügbar.
+              urlPattern: ({ url }) => url.pathname.endsWith('.wasm'),
+              handler: 'CacheFirst',
+              options: { cacheName: 'scanner-wasm', expiration: { maxEntries: 2 } },
+            },
           ],
         },
       }),

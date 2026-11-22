@@ -7,8 +7,9 @@ import { EmptyState, InlineError } from '../../../components/States'
 import { toMessage } from '../../../lib/supabase'
 import { createFood, deleteFood, updateFood } from './api'
 import { BUILTIN_FOODS, type FoodNutrients } from './builtin'
+import { BarcodeEntry } from './BarcodeEntry'
 import { FoodDefForm } from './FoodDefForm'
-import { decimalText, toFoodDefForm, type Food } from './foodMath'
+import { decimalText, toFoodDefForm, type Food, type NewFood } from './foodMath'
 
 interface Props {
   readonly own: readonly Food[]
@@ -35,6 +36,12 @@ export function MyFoodsPanel({ own, onChanged, onClose }: Props) {
     else await createFood(food)
     setEditing(null)
     onChanged()
+  }
+
+  async function saveScanned(food: NewFood): Promise<Food> {
+    const saved = await createFood(food)
+    onChanged()
+    return saved
   }
 
   async function confirmRemove() {
@@ -77,6 +84,11 @@ export function MyFoodsPanel({ own, onChanged, onClose }: Props) {
             <Button variant="ghost" onClick={onClose}>
               Zurück
             </Button>
+          </div>
+        )}
+        {editing === null && (
+          <div className="mt-3">
+            <BarcodeEntry foods={own} onSaveFood={saveScanned} />
           </div>
         )}
       </Card>
